@@ -1,19 +1,25 @@
 use thiserror::Error;
 use logos::{Lexer, Logos, Span};
 
-pub fn parse(input: &str) -> Result<Specs, SpecParseError> {
-    let mut parser = SpecParser::new(input);
+pub fn parse(input: &str, options: ParseOptions) -> Result<Specs, SpecParseError> {
+    let mut parser = SpecParser::new(input, options);
     parser.parse()
+}
+
+pub struct ParseOptions {
+    pub require_test_marker: bool
 }
 
 struct SpecParser<'a> {
     input: &'a str,
-    lexer: SpecLexer
+    lexer: SpecLexer,
+
+    options: ParseOptions
 }
 
 impl<'a> SpecParser<'a> {
-    fn new(input: &'a str) -> SpecParser<'a> {
-        SpecParser { input, lexer: SpecLexer::new(input) }
+    fn new(input: &'a str, options: ParseOptions) -> SpecParser<'a> {
+        SpecParser { input, lexer: SpecLexer::new(input), options }
     }
 
     fn parse(&mut self) -> Result<Specs, SpecParseError> {
@@ -22,11 +28,12 @@ impl<'a> SpecParser<'a> {
     
         self.lexer = SpecLexer::new(self.input);
     
-        // Make sure it starts with //test
-        match self.lexer.next() {
-            Some((TestStartMarker, _)) => (),
-            _ => return Err(NotSpec)
-        };
+        // Make sure it starts with //test if required
+        if self.options.require_test_marker {
+            if !matches!(self.lexer.next(), Some((TestStartMarker, _))) {
+                return Err(NotSpec)
+            }
+        }
     
         let mut tests: Vec<(Option<ImplementationPredicate>, Behavior)> = Vec::new();
     
@@ -118,7 +125,7 @@ impl<'a> SpecParser<'a> {
             // No postfix operators so 'peek' technically could be 'next'
             let (left_bp, right_bp) = match self.lexer.peek() {
                 None => break,
-                Some((tok, range)) => 
+                Some((tok, _)) => 
                     match infix_binding_power(&tok) {
                         Some(bps) => bps, 
                         None => break
@@ -148,23 +155,19 @@ impl<'a> SpecParser<'a> {
         use Behavior::*;
     
         match self.lexer.next() {
-            None => 
-                Err(
-                    UnexpectedEOF {
-                        msg: "behavior"
-                    }
-                ),
-    
+            None => Err(UnexpectedEOF { msg: "behavior" }),
             Some((tok, range)) => 
                 match tok {
                     SpecToken::CompileError => Ok(CompileError),
                     SpecToken::Runs => Ok(Runs),
                     SpecToken::InfiniteLoop => Ok(InfiniteLoop),
+                    SpecToken::Abort => Ok(Abort),
+                    SpecToken::Failure => Ok(Failure),
                     SpecToken::Segfault => Ok(Segfault),
                     SpecToken::DivZero => Ok(DivZero),
                     SpecToken::Return(x) => Ok(Return(x)),
     
-                    _ => Err(self.unexpected_token(range, "expected behavior"))
+                    _ => Err(self.unexpected_token(range, "behavior"))
                 }
         }
     }
@@ -215,6 +218,8 @@ pub enum Behavior {
     CompileError,
     Runs,
     InfiniteLoop,
+    Abort,
+    Failure,
     Segfault,
     DivZero,
     Return(Option<i32>)
@@ -255,6 +260,10 @@ enum SpecToken {
     Runs,
     #[token("infloop")]
     InfiniteLoop,
+    #[token("abort")]
+    Abort,
+    #[token("failure")]
+    Failure,
     #[token("segfault")]
     Segfault,
     #[token("div-by-zero")]
@@ -265,7 +274,7 @@ enum SpecToken {
     // Only used to help lex return
     #[token("*")]
     Star,
-    #[regex("[1-9][0-9]*", |lex| i32::from_str_radix(lex.slice(), 10).ok())]
+    #[regex("[+-]?(0|[1-9][0-9]*)", |lex| i32::from_str_radix(lex.slice(), 10).ok())]
     #[regex("0[xX][0-9a-fA-F]+", |lex| i32::from_str_radix(&lex.slice()[2..], 16).ok())]
     Number(i32),
 
@@ -280,7 +289,7 @@ enum SpecToken {
     #[token("false")]
     False,
 
-    #[regex(r"[-a-zA-Z_][-a-zA-Z0-9_]*", |lex| String::from(lex.slice()))]
+    #[regex(r"[a-zA-Z_][-a-zA-Z0-9_]*", |lex| String::from(lex.slice()))]
     Implementation(String),
 
     #[token("!")]
@@ -308,6 +317,8 @@ impl SpecToken {
             | Runs
             | InfiniteLoop 
             | Segfault 
+            | Abort
+            | Failure
             | DivZero
             | Return(_)
         )
