@@ -225,12 +225,34 @@ pub enum Behavior {
     Return(Option<i32>)
 }
 
+impl PartialEq for Behavior {
+    fn eq(&self, other: &Behavior) -> bool {
+        use Behavior::*;
+        match (self, other) {
+            (CompileError, CompileError) => true,
+            (Runs, Runs) => true,
+            (InfiniteLoop, InfiniteLoop) => true,
+            (Abort, Abort) => true,
+            (Failure, Failure) => true,
+            (Segfault, Segfault) => true,
+            (DivZero, DivZero) => true,
+            (Return(x), Return(y)) => 
+                match (x, y) {
+                    (None, _) => true,
+                    (_, None) => true,
+                    (Some(a), Some(b)) => a == b
+                },
+            _ => false
+        }
+    }
+}
+
 #[cfg(test)]
 mod parser_tests {
     use super::*;
 
     fn parse_test(input: &str, valid: bool) {
-        let result = parse(input);
+        let result = parse(input, ParseOptions { require_test_marker: true });
 
         println!("{}: {:?}", input, result);
         if result.is_ok() != valid {
