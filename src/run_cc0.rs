@@ -3,6 +3,7 @@ use std::process;
 use std::env;
 use std::fs;
 use std::path::Path;
+use lazy_static::lazy_static;
 use nix::{unistd, sys::wait::{self, WaitStatus}, sys::signal::Signal};
 use anyhow::{anyhow, Context, Result};
 
@@ -31,6 +32,17 @@ impl Executer for CC0Executer {
     }
 }
 
+lazy_static! {
+    static ref DEVNULL: i32 = {
+        use nix::fcntl::OFlag;
+        use nix::sys::stat::Mode;
+        nix::fcntl::open("/dev/null", OFlag::O_WRONLY, Mode::empty()).expect("Couldn't open /dev/null")
+    };
+}
+
+static STDOUT_FILENO: i32 = 1;
+static STDERR_FILENO: i32 = 2;
+
 /// Timeout for compilation
 static COMPILATION_TIMEOUT: u32 = 10;
 
@@ -50,7 +62,10 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     match unsafe { unistd::fork().context("when spawning CC0")? } {
         unistd::ForkResult::Child => {
             unistd::alarm::set(COMPILATION_TIMEOUT);
-            // TODO: redirect or capture IO?
+            
+            unistd::dup2(*DEVNULL, STDOUT_FILENO).expect("Couldn't redirect stdout");
+            unistd::dup2(*DEVNULL, STDERR_FILENO).expect("Couldn't redirect stderr");
+
             let _ = unistd::execvp( &compiler, &args);
             process::exit(2);
         },
@@ -73,12 +88,19 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
 
+    // unistd::dup2(, newfd)
+
     match unsafe { unistd::fork().context("when spawning test process")? } {
         unistd::ForkResult::Child => {
-            // TODO: redirect IO
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
+            
             unistd::alarm::set(TEST_TIMEOUT);
+
+            unistd::dup2(*DEVNULL, STDOUT_FILENO).expect("Couldn't redirect stdout");
+            unistd::dup2(*DEVNULL, STDERR_FILENO).expect("Couldn't redirect stderr");
+
             let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[&result_env]);
+            // Couldn't exec
             process::exit(2);
         },
 

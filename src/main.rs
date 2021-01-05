@@ -2,6 +2,7 @@ use std::env;
 use std::path::Path;
 use std::sync::Mutex;
 use rayon::prelude::*;
+use indicatif::{ProgressBar, ProgressStyle, ParallelProgressIterator};
 use anyhow::{Result, Error};
 
 mod spec;
@@ -29,17 +30,18 @@ fn main() -> Result<()> {
 
     let tests = discover_tests::discover(Path::new(test_path))?;
 
-    tests.par_iter().for_each(|test| {
+    let progressbar = ProgressBar::new(tests.len() as u64)
+        .with_style(ProgressStyle::default_bar()
+        .template("Running tests: [{elapsed_precise} elapsed] {bar:40.red} {pos:>5}/{len:5} {msg} [{eta_precise} remaining]")
+        .progress_chars("#>-"));
+
+    tests.par_iter().progress_with(progressbar).for_each(|test| {
         match checker::run_test::<run_cc0::CC0Executer>(test) {
-            Ok(true) => {
-                println!("✅ Test passed");
-            },
+            Ok(true) => (),
             Ok(false) => {
-                println!("❌ Test failed");
                 failures.lock().unwrap().push(test);
             },
             Err(e) => {
-                println!("⛔ Error when running test: {:#}\n", e);
                 errors.lock().unwrap().push((test, e));
             }
         }
