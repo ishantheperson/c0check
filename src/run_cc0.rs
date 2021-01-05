@@ -34,14 +34,6 @@ impl Executer for CC0Executer {
 static COMPILATION_TIMEOUT: u32 = 10;
 
 fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
-    fn str_to_cstring(s: &str) -> CString {
-        CString::new(s.as_bytes()).unwrap()        
-    }
-
-    fn string_to_cstring(s: &String) -> CString {
-        CString::new(s.as_bytes()).unwrap()        
-    }
-
     let compiler = CString::new("/home/ishan/c0-developer/cc0/bin/cc0").unwrap();
 
     // Create args
@@ -57,7 +49,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     match unsafe { unistd::fork().context("when spawning CC0")? } {
         unistd::ForkResult::Child => {
             unistd::alarm::set(COMPILATION_TIMEOUT);
-            // TODO: redirect IO
+            // TODO: redirect or capture IO?
             let _ = unistd::execvp( &compiler, &args);
             process::exit(2);
         },
@@ -77,21 +69,44 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
 static TEST_TIMEOUT: u32 = 10;
 
 fn execute(executable: &CString) -> Result<Behavior> {
+    let result_file = format!("c0_result{}", unistd::gettid());
+    let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
+
     match unsafe { unistd::fork().context("when spawning test process")? } {
         unistd::ForkResult::Child => {
             // TODO: redirect IO, set result file, change to test directory first
             unistd::alarm::set(TEST_TIMEOUT);
-            let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[]);
+            let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[&result_env]);
             process::exit(2);
         },
 
         unistd::ForkResult::Parent { child } => {
-            let status = match wait::waitpid(child, None).expect("Failed to wait() for test program") {
-                WaitStatus::Exited(_, 0) => Ok(Behavior::Return(Some(0))),
+            let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
+            
+            let result = match fs::read(&result_file) {
+                Ok(bytes) => bytes,
+                Err(_) => Vec::new()
+            };
+            
+            fs::remove_file(Path::new(&executable.to_str().unwrap()))
+                .context("when removing test program")?;
+
+            fs::remove_file(Path::new(&result_file))
+                .context("when removing test program result file")?;
+
+            match status {
+                WaitStatus::Exited(_, 0) => 
+                    if result.len() == 5 {
+                        let bytes = [result[1], result[2], result[3], result[4]];
+                        Ok(Behavior::Return(Some(i32::from_ne_bytes(bytes))))
+                    }
+                    else {
+                        Err(anyhow!("C0 program exited succesfully, but no return value was written"))
+                    },
                 WaitStatus::Exited(_, 1) => Ok(Behavior::Failure),
                 WaitStatus::Exited(_, 2) => Err(anyhow!("Failed to exec the test program")),
                 WaitStatus::Exited(_, status) => Err(anyhow!("Unexpected program exit status '{}'", status)),
-
+                
                 WaitStatus::Signaled(_, signal, _) => match signal {
                     Signal::SIGSEGV => Ok(Behavior::Segfault),
                     Signal::SIGALRM => Ok(Behavior::InfiniteLoop),
@@ -100,12 +115,7 @@ fn execute(executable: &CString) -> Result<Behavior> {
                     other => Err(anyhow!("Program exited with unexpected signal '{}'", other))
                 }   
                 status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)) // unexpected
-            };
-
-            fs::remove_file(Path::new(&executable.to_str().unwrap()))
-                .context("when removing test program")?;
-
-            status
+            }
         },
     }
 }
@@ -129,4 +139,12 @@ mod compile_tests {
 
         Ok(())
     }
+}
+
+fn str_to_cstring(s: &str) -> CString {
+    CString::new(s.as_bytes()).unwrap()        
+}
+
+fn string_to_cstring(s: &String) -> CString {
+    CString::new(s.as_bytes()).unwrap()        
 }
