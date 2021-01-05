@@ -1,4 +1,4 @@
-use std::{ffi::{CString}};
+use std::ffi::CString;
 use std::process;
 use std::env;
 use std::fs;
@@ -66,7 +66,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
             unistd::dup2(*DEVNULL, STDOUT_FILENO).expect("Couldn't redirect stdout");
             unistd::dup2(*DEVNULL, STDERR_FILENO).expect("Couldn't redirect stderr");
 
-            let _ = unistd::execvp( &compiler, &args);
+            let _ = unistd::execvp( &compiler, &args).expect("Couldn't exec!");
             process::exit(2);
         },
         unistd::ForkResult::Parent { child } => {

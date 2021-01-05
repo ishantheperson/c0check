@@ -354,7 +354,6 @@ impl SpecLexer {
 
     fn next(&mut self) -> Option<(SpecToken, Span)> {
         self.tokens.pop()
-
     }
 
     fn peek(&self) -> Option<(SpecToken, Span)> {
