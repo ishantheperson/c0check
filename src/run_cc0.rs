@@ -1,5 +1,6 @@
-use std::ffi::{CString};
+use std::{ffi::{CString}};
 use std::process;
+use std::env;
 use std::fs;
 use std::path::Path;
 use nix::{unistd, sys::wait::{self, WaitStatus}, sys::signal::Signal};
@@ -14,7 +15,7 @@ impl Executer for CC0Executer {
     fn run_test(info: &TestExecutionInfo) -> Result<Behavior> {
         let compilation_result = compile(info)?;
         match compilation_result {
-            Some(name) => execute(&name),
+            Some(name) => execute(info, &name),
             None => Ok(Behavior::CompileError)
         }
     }
@@ -42,7 +43,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     args.extend(test.compiler_options.iter().map(string_to_cstring));
     args.extend(test.sources.iter().map(string_to_cstring));
     
-    let out_file: CString = str_to_cstring(&format!("a.out{}", unistd::gettid()));
+    let out_file: CString = str_to_cstring(&format!("{}/a.out{}", env::current_dir().unwrap().display(), unistd::gettid()));
     args.push(str_to_cstring("-o"));
     args.push(out_file.clone());
 
@@ -68,13 +69,14 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
 /// Timeout for running tests
 static TEST_TIMEOUT: u32 = 10;
 
-fn execute(executable: &CString) -> Result<Behavior> {
-    let result_file = format!("c0_result{}", unistd::gettid());
+fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
+    let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
 
     match unsafe { unistd::fork().context("when spawning test process")? } {
         unistd::ForkResult::Child => {
-            // TODO: redirect IO, set result file, change to test directory first
+            // TODO: redirect IO
+            env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
             unistd::alarm::set(TEST_TIMEOUT);
             let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[&result_env]);
             process::exit(2);
@@ -84,15 +86,16 @@ fn execute(executable: &CString) -> Result<Behavior> {
             let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
             
             let result = match fs::read(&result_file) {
-                Ok(bytes) => bytes,
+                Ok(bytes) => {
+                    fs::remove_file(Path::new(&result_file))
+                        .context("when removing test program result file")?;                    
+                    bytes
+                }
                 Err(_) => Vec::new()
             };
             
             fs::remove_file(Path::new(&executable.to_str().unwrap()))
                 .context("when removing test program")?;
-
-            fs::remove_file(Path::new(&result_file))
-                .context("when removing test program result file")?;
 
             match status {
                 WaitStatus::Exited(_, 0) => 
@@ -123,6 +126,7 @@ fn execute(executable: &CString) -> Result<Behavior> {
 #[cfg(test)]
 mod compile_tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test() -> Result<()> {
@@ -130,12 +134,13 @@ mod compile_tests {
             execution: TestExecutionInfo {
                 compiler_options: vec![],
                 sources: vec!["test_resources/test.c0".to_string()],
+                directory: Arc::from("./")
             },
             specs: vec![]
         };
 
         let name = compile(&test.execution)?.ok_or(anyhow!("Test did not compile"))?;
-        assert_eq!(execute(&name)?, Behavior::Return(Some(0)));
+        assert_eq!(execute(&test.execution, &name)?, Behavior::Return(Some(0)));
 
         Ok(())
     }

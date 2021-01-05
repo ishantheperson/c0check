@@ -1,5 +1,6 @@
 use std::fmt::{self, Formatter, Display};
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct TestInfo {
@@ -10,7 +11,8 @@ pub struct TestInfo {
 #[derive(Debug)]
 pub struct TestExecutionInfo {
     pub sources: Vec<String>,
-    pub compiler_options: Vec<String>
+    pub compiler_options: Vec<String>,
+    pub directory: Arc<str>
 }
 
 #[derive(Debug)]
@@ -86,7 +88,9 @@ impl Display for TestInfo {
         }).collect();
 
         write!(f, "{}", sources.join(" "))?;
-        write!(f, "{}", self.execution.compiler_options.join(" "))?;
+        for option in self.execution.compiler_options.iter() {
+            write!(f, " {}", option)?;
+        }
         write!(f, ": ")?;
 
         let mut first = true;

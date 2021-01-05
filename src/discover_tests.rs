@@ -1,7 +1,7 @@
 use std::{fs::{self, File}, io::BufReader};
 use std::io::prelude::*;
 use std::path::Path;
-
+use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 
 use crate::parse_spec::{self, ParseOptions};
@@ -42,6 +42,8 @@ fn read_source_test(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
     let lines = reader.lines();
     let mut tests = Vec::new();
 
+    let directory = Arc::<str>::from(dir.to_str().unwrap());
+
     for (line, lineno) in lines.zip(1usize..) {
         let line = line?;
 
@@ -76,6 +78,7 @@ fn read_source_test(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
             execution: TestExecutionInfo {
                 sources,
                 compiler_options,
+                directory: directory.clone()
             },
             specs
         };
@@ -92,6 +95,7 @@ fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
         .filter_map(Result::ok);
 
     let mut tests = Vec::new();
+    let directory = Arc::<str>::from(dir.to_str().unwrap());
 
     for test in test_paths {
         let path = test.path();
@@ -124,6 +128,7 @@ fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
             execution: TestExecutionInfo {
                 sources: vec![String::from(test.path().to_str().expect("Invalid character in path"))],
                 compiler_options: Vec::new(),
+                directory: directory.clone()
             },
             specs
         };
