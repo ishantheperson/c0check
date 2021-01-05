@@ -44,7 +44,7 @@ static STDOUT_FILENO: i32 = 1;
 static STDERR_FILENO: i32 = 2;
 
 /// Timeout for compilation
-static COMPILATION_TIMEOUT: u32 = 10;
+static COMPILATION_TIMEOUT: u32 = 15;
 
 fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     let compiler = CString::new("/home/ishan/c0-developer/cc0/bin/cc0").unwrap();
@@ -82,7 +82,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
 }
 
 /// Timeout for running tests
-static TEST_TIMEOUT: u32 = 10;
+static TEST_TIMEOUT: u32 = 15;
 
 fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());

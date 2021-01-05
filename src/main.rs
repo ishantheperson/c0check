@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         }
     };
 
-    /// A list of tests and their (expected, actual) behavior
+    // A list of tests and their (expected, actual) behavior
     let failures: Mutex<Vec<(&TestInfo, (Behavior, Behavior))>> = Mutex::new(Vec::new());
     let errors: Mutex<Vec<(&TestInfo, Error)>> = Mutex::new(Vec::new());
 
