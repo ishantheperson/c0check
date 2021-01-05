@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::executer::*;
 use crate::spec::*;
 
-pub fn run_test<T: Executer>(test: &TestInfo) -> Result<bool> {
+pub fn run_test<T: Executer>(test: &TestInfo) -> Result<TestResult> {
     let properties = T::properties();
     
     // See if any behaviors apply
@@ -15,11 +15,22 @@ pub fn run_test<T: Executer>(test: &TestInfo) -> Result<bool> {
     }
     
     if behaviors.is_empty() {
-        return Ok(true)
+        return Ok(TestResult::Success)
     }
     
     let result = T::run_test(&test.execution)?;
-    Ok(behaviors.iter().all(|&b| b == &result))
+    for &behavior in behaviors.iter() {
+        if behavior != &result {
+            return Ok(TestResult::Mismatch { expected: *behavior, actual: result })
+        }
+    }
+
+    Ok(TestResult::Success)    
+}
+
+pub enum TestResult {
+    Success,
+    Mismatch { expected: Behavior, actual: Behavior }
 }
 
 fn matches_predicate(predicate: &ImplementationPredicate, properties: &ExecuterProperties) -> bool {

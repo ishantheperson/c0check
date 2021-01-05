@@ -13,6 +13,7 @@ mod checker;
 mod executer;
 
 use crate::spec::*;
+use crate::checker::TestResult;
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args().collect();
@@ -25,7 +26,8 @@ fn main() -> Result<()> {
         }
     };
 
-    let failures: Mutex<Vec<&TestInfo>> = Mutex::new(Vec::new());
+    /// A list of tests and their (expected, actual) behavior
+    let failures: Mutex<Vec<(&TestInfo, (Behavior, Behavior))>> = Mutex::new(Vec::new());
     let errors: Mutex<Vec<(&TestInfo, Error)>> = Mutex::new(Vec::new());
 
     let tests = discover_tests::discover(Path::new(test_path))?;
@@ -37,9 +39,9 @@ fn main() -> Result<()> {
 
     tests.par_iter().progress_with(progressbar).for_each(|test| {
         match checker::run_test::<run_cc0::CC0Executer>(test) {
-            Ok(true) => (),
-            Ok(false) => {
-                failures.lock().unwrap().push(test);
+            Ok(TestResult::Success) => (),
+            Ok(TestResult::Mismatch { expected, actual}) => {
+                failures.lock().unwrap().push((test, (expected, actual)));
             },
             Err(e) => {
                 errors.lock().unwrap().push((test, e));
@@ -51,11 +53,9 @@ fn main() -> Result<()> {
     let errors = errors.lock().unwrap();
     let success = tests.len() - failures.len() - errors.len();
 
-    println!("--------------------------------");
-
     println!("Failed tests:\n");
-    for &failure in failures.iter() {
-        println!("❌ {}", failure);
+    for (failure, (expected, actual)) in failures.iter() {
+        println!("❌ {}\nexpected {}, found {}", failure, expected, actual);
     }
 
     println!("\nErrors:\n");

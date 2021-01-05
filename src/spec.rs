@@ -37,7 +37,7 @@ pub enum ImplementationPredicate {
     Or(Box<ImplementationPredicate>, Box<ImplementationPredicate>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Behavior {
     CompileError,
     Runs,

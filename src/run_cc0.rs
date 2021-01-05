@@ -88,8 +88,6 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
 
-    // unistd::dup2(, newfd)
-
     match unsafe { unistd::fork().context("when spawning test process")? } {
         unistd::ForkResult::Child => {
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
@@ -130,6 +128,7 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
                     },
                 WaitStatus::Exited(_, 1) => Ok(Behavior::Failure),
                 WaitStatus::Exited(_, 2) => Err(anyhow!("Failed to exec the test program")),
+                WaitStatus::Exited(_, 101) => Err(anyhow!("Test program process panic'd")),
                 WaitStatus::Exited(_, status) => Err(anyhow!("Unexpected program exit status '{}'", status)),
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
