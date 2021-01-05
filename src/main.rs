@@ -1,5 +1,7 @@
 use std::env;
 use std::path::Path;
+use std::sync::Mutex;
+use rayon::prelude::*;
 use anyhow::{Result, Error};
 
 mod spec;
@@ -22,29 +24,30 @@ fn main() -> Result<()> {
         }
     };
 
-    let mut success = 0;
-    let mut failures: Vec<&TestInfo> = Vec::new();
-    let mut errors: Vec<(&TestInfo, Error)> = Vec::new();
+    let failures: Mutex<Vec<&TestInfo>> = Mutex::new(Vec::new());
+    let errors: Mutex<Vec<(&TestInfo, Error)>> = Mutex::new(Vec::new());
 
     let tests = discover_tests::discover(Path::new(test_path))?;
-    for (test, i) in tests.iter().zip(1..) {
-        println!("Test {}/{}: {}", i, tests.len(), test);
 
+    tests.par_iter().for_each(|test| {
         match checker::run_test::<run_cc0::CC0Executer>(test) {
             Ok(true) => {
                 println!("✅ Test passed");
-                success += 1;
             },
             Ok(false) => {
                 println!("❌ Test failed");
-                failures.push(test)
+                failures.lock().unwrap().push(test);
             },
             Err(e) => {
                 println!("⛔ Error when running test: {:#}\n", e);
-                errors.push((test, e));
+                errors.lock().unwrap().push((test, e));
             }
         }
-    }
+    });
+
+    let failures = failures.lock().unwrap();
+    let errors = errors.lock().unwrap();
+    let success = tests.len() - failures.len() - errors.len();
 
     println!("--------------------------------");
 
