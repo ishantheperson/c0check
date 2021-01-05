@@ -1,12 +1,27 @@
 use thiserror::Error;
 use logos::{Lexer, Logos, Span};
 
+use crate::spec::*;
+
+/// Parses a 'spec' string with the given options
+///
+/// spec ::= <predicate> => <spec>
+///        | <behavior>
+///
+/// predicate ::= lib | typechecked | gc | safe | false | <ident>
+///             | ! <predicate>
+///             | <predicate>, <predicate>
+///             | <predicate> or <predicate> 
+///
+/// behavior ::= error | infloop | abort | failure | segfault | div-by-zero
+///            | runs | return * | return <int>
 pub fn parse(input: &str, options: ParseOptions) -> Result<Specs, SpecParseError> {
     let mut parser = SpecParser::new(input, options);
     parser.parse()
 }
 
 pub struct ParseOptions {
+    /// Whether '//test' should appear at the start of the spec string
     pub require_test_marker: bool
 }
 
@@ -35,34 +50,10 @@ impl<'a> SpecParser<'a> {
             }
         }
     
-        let mut tests: Vec<(Option<ImplementationPredicate>, Behavior)> = Vec::new();
+        let mut tests: Specs = Vec::new();
     
         loop {
-            let (tok, _) = match self.lexer.peek() {
-                Some(tok) => tok,
-                None => return Err(UnexpectedEOF { msg: "implementation or behavior"} )
-            };
-
-            let spec = if tok.is_behavior() {
-                let behavior = self.parse_behavior()?;
-                (None, behavior)
-            }
-            else {
-                let implementation = self.parse_implementation(0)?;
-
-                match self.lexer.next() {
-                    Some((FatArrow, _)) => (),
-                    Some((_, range)) => 
-                        return Err(self.unexpected_token(range, "'=>' between implementation and behavior")),
-                    None => 
-                        return Err(UnexpectedEOF { msg: "'=>' between implementation and behavior" }),
-                }
-
-                let behavior = self.parse_behavior()?;
-
-                (Some(implementation), behavior)
-            };
-
+            let spec = self.parse_spec()?;
             tests.push(spec);
 
             match self.lexer.next() {
@@ -75,6 +66,47 @@ impl<'a> SpecParser<'a> {
         Ok(tests)
     }
     
+    /// Parses a spec
+    /// 
+    /// spec ::= <predicate> => <spec>
+    ///        | <behavior>
+    fn parse_spec(&mut self) -> Result<Spec, SpecParseError> {
+        use SpecParseError::*;
+        use SpecToken::*;
+
+        let (tok, _) = match self.lexer.peek() {
+            Some(tok) => tok,
+            None => return Err(UnexpectedEOF { msg: "implementation or behavior"} )
+        };
+
+        if tok.is_behavior() {
+            let behavior = self.parse_behavior()?;
+            Ok(Spec::Behavior(behavior))
+        }
+        else {
+            let implementation = self.parse_implementation(0)?;
+
+            // After a predicate we always expect => 
+            match self.lexer.next() {
+                Some((FatArrow, _)) => (),
+                Some((_, range)) => 
+                    return Err(self.unexpected_token(range, "'=>' between implementation and behavior")),
+                None => 
+                    return Err(UnexpectedEOF { msg: "'=>' between implementation and behavior" }),
+            }
+
+            // Could be a loop too
+            let consequent = self.parse_spec()?;
+            Ok(Spec::Implication(implementation, Box::new(consequent)))
+        }
+    }
+
+    /// Parses an implementation predicate
+    /// 
+    /// predicate ::= lib | typechecked | gc | safe | false | <ident>
+    ///             | ! <predicate>
+    ///             | <predicate>, <predicate>
+    ///             | <predicate> or <predicate> 
     fn parse_implementation(&mut self, min_bp: i32) -> Result<ImplementationPredicate, SpecParseError> {
         use SpecParseError::*;
         use ImplementationPredicate::*;
@@ -150,6 +182,10 @@ impl<'a> SpecParser<'a> {
         Ok(lhs)
     }
 
+    /// Parses a program expected behavior
+    /// 
+    /// behavior ::= error | infloop | abort | failure | segfault | div-by-zero
+    ///            | runs | return * | return <int>
     fn parse_behavior(&mut self) -> Result<Behavior, SpecParseError> {
         use SpecParseError::*;
         use Behavior::*;
@@ -194,59 +230,6 @@ pub enum SpecParseError {
     UnexpectedEOF { msg: &'static str }
 }
 
-/// A spec is a list of mappings
-// from implementations to their expected behavior.
-pub type Spec = (Option<ImplementationPredicate>, Behavior);
-pub type Specs = Vec<Spec>;
-
-#[derive(Debug)]
-pub enum ImplementationPredicate {
-    Library,
-    Typechecked,
-    GarbageCollected,
-    Safe,
-    False,
-    ImplementationName(String),
-
-    Not(Box<ImplementationPredicate>),
-    And(Box<ImplementationPredicate>, Box<ImplementationPredicate>),
-    Or(Box<ImplementationPredicate>, Box<ImplementationPredicate>)
-}
-
-#[derive(Debug)]
-pub enum Behavior {
-    CompileError,
-    Runs,
-    InfiniteLoop,
-    Abort,
-    Failure,
-    Segfault,
-    DivZero,
-    Return(Option<i32>)
-}
-
-impl PartialEq for Behavior {
-    fn eq(&self, other: &Behavior) -> bool {
-        use Behavior::*;
-        match (self, other) {
-            (CompileError, CompileError) => true,
-            (Runs, Runs) => true,
-            (InfiniteLoop, InfiniteLoop) => true,
-            (Abort, Abort) => true,
-            (Failure, Failure) => true,
-            (Segfault, Segfault) => true,
-            (DivZero, DivZero) => true,
-            (Return(x), Return(y)) => 
-                match (x, y) {
-                    (None, _) => true,
-                    (_, None) => true,
-                    (Some(a), Some(b)) => a == b
-                },
-            _ => false
-        }
-    }
-}
-
 #[cfg(test)]
 mod parser_tests {
     use super::*;
@@ -267,7 +250,8 @@ mod parser_tests {
         parse_test("//test safe, typecheck => return 5", true);
         parse_test("//test cc0 or coin => return 5", true);
 
-        parse_test("//test safe => segfault; !safe => runs", true)
+        parse_test("//test safe => segfault; !safe => runs", true);
+        parse_test("//test safe => !cc0_c0vm => div-by-zero", true)
     }
 }
 

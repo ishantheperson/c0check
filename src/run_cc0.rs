@@ -5,9 +5,35 @@ use std::path::Path;
 use nix::{unistd, sys::wait::{self, WaitStatus}, sys::signal::Signal};
 use anyhow::{anyhow, Context, Result};
 
-use crate::{discover_tests::{TestInfo}, parse_spec::Behavior};
+use crate::spec::*;
+use crate::executer::*;
 
-fn compile(test: &TestInfo) -> Result<Option<CString>> {
+pub struct CC0Executer();
+
+impl Executer for CC0Executer {
+    fn run_test(info: &TestExecutionInfo) -> Result<Behavior> {
+        let compilation_result = compile(info)?;
+        match compilation_result {
+            Some(name) => execute(&name),
+            None => Ok(Behavior::CompileError)
+        }
+    }
+
+    fn properties() -> ExecuterProperties {
+        ExecuterProperties {
+            libraries: true,
+            garbage_collected: true,
+            safe: true,
+            typechecked: true,
+            name: "cc0".to_string()
+        }
+    }
+}
+
+/// Timeout for compilation
+static COMPILATION_TIMEOUT: u32 = 10;
+
+fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     fn str_to_cstring(s: &str) -> CString {
         CString::new(s.as_bytes()).unwrap()        
     }
@@ -30,6 +56,8 @@ fn compile(test: &TestInfo) -> Result<Option<CString>> {
 
     match unsafe { unistd::fork().context("when spawning CC0")? } {
         unistd::ForkResult::Child => {
+            unistd::alarm::set(COMPILATION_TIMEOUT);
+            // TODO: redirect IO
             let _ = unistd::execvp( &compiler, &args);
             process::exit(2);
         },
@@ -38,16 +66,21 @@ fn compile(test: &TestInfo) -> Result<Option<CString>> {
                 WaitStatus::Exited(_, 0) => Ok(Some(out_file)),
                 WaitStatus::Exited(_, 1) => Ok(None),
                 WaitStatus::Exited(_, 2) => Err(anyhow!("Failed to exec cc0")),
+                WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")),
                 status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)) // unexpected
             }
         }
     }
 }
 
+/// Timeout for running tests
+static TEST_TIMEOUT: u32 = 10;
+
 fn execute(executable: &CString) -> Result<Behavior> {
     match unsafe { unistd::fork().context("when spawning test process")? } {
         unistd::ForkResult::Child => {
-            unistd::alarm::set(10);
+            // TODO: redirect IO, set result file, change to test directory first
+            unistd::alarm::set(TEST_TIMEOUT);
             let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[]);
             process::exit(2);
         },
@@ -74,7 +107,6 @@ fn execute(executable: &CString) -> Result<Behavior> {
 
             status
         },
-
     }
 }
 
@@ -85,12 +117,14 @@ mod compile_tests {
     #[test]
     fn test() -> Result<()> {
         let test = TestInfo {
-            compiler_options: vec![],
-            sources: vec!["test_resources/test.c0".to_string()],
+            execution: TestExecutionInfo {
+                compiler_options: vec![],
+                sources: vec!["test_resources/test.c0".to_string()],
+            },
             specs: vec![]
         };
 
-        let name = compile(&test)?.ok_or(anyhow!("Test did not compile"))?;
+        let name = compile(&test.execution)?.ok_or(anyhow!("Test did not compile"))?;
         assert_eq!(execute(&name)?, Behavior::Return(Some(0)));
 
         Ok(())

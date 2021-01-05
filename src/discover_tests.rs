@@ -4,15 +4,8 @@ use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::parse_spec::{self, Specs, ParseOptions};
-
-#[derive(Debug)]
-pub struct TestInfo {
-    pub sources: Vec<String>,
-    pub compiler_options: Vec<String>,
-
-    pub specs: Specs
-}
+use crate::parse_spec::{self, ParseOptions};
+use crate::spec::*;
 
 pub fn discover(base: &Path) -> Result<Vec<TestInfo>> {
     let paths = fs::read_dir(base)
@@ -80,8 +73,10 @@ fn read_source_test(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
         }
 
         let test = TestInfo {
-            sources,
-            compiler_options,
+            execution: TestExecutionInfo {
+                sources,
+                compiler_options,
+            },
             specs
         };
 
@@ -129,8 +124,10 @@ fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
         };
 
         let test = TestInfo {
-            sources: vec![String::from(test.path().to_str().expect("Invalid character in path"))],
-            compiler_options: Vec::new(),
+            execution: TestExecutionInfo {
+                sources: vec![String::from(test.path().to_str().expect("Invalid character in path"))],
+                compiler_options: Vec::new(),
+            },
             specs
         };
 
