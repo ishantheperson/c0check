@@ -1,3 +1,4 @@
+use std::fmt::{self, Display};
 use anyhow::Result;
 
 use crate::executer::*;
@@ -9,7 +10,7 @@ pub fn run_test<T: Executer>(test: &TestInfo) -> Result<TestResult> {
     // See if any behaviors apply
     let mut behaviors: Vec<&Behavior> = Vec::new();
     for spec in test.specs.iter() {
-        if let Some(behavior) = behavior(spec, &properties) {
+        if let Some(behavior) = find_behavior(spec, &properties) {
             behaviors.push(behavior)
         }
     }
@@ -18,10 +19,10 @@ pub fn run_test<T: Executer>(test: &TestInfo) -> Result<TestResult> {
         return Ok(TestResult::Success)
     }
     
-    let result = T::run_test(&test.execution)?;
+    let (output, result) = T::run_test(&test.execution)?;
     for &behavior in behaviors.iter() {
         if behavior != &result {
-            return Ok(TestResult::Mismatch { expected: *behavior, actual: result })
+            return Ok(TestResult::Mismatch(Failure { expected: *behavior, actual: result, output }))
         }
     }
 
@@ -30,7 +31,16 @@ pub fn run_test<T: Executer>(test: &TestInfo) -> Result<TestResult> {
 
 pub enum TestResult {
     Success,
-    Mismatch { expected: Behavior, actual: Behavior }
+    Mismatch(Failure)
+}
+
+/// Contains all information from a failed test run,
+/// including stdout/stderr from the compiler or program
+/// (depending on which stage failed)
+pub struct Failure {
+    pub expected: Behavior,
+    pub actual: Behavior, 
+    pub output: String    
 }
 
 fn matches_predicate(predicate: &ImplementationPredicate, properties: &ExecuterProperties) -> bool {
@@ -49,12 +59,12 @@ fn matches_predicate(predicate: &ImplementationPredicate, properties: &ExecuterP
     }
 }
 
-fn behavior<'a>(spec: &'a Spec, properties: &ExecuterProperties) -> Option<&'a Behavior> {
+fn find_behavior<'a>(spec: &'a Spec, properties: &ExecuterProperties) -> Option<&'a Behavior> {
     match spec {
         Spec::Behavior(b) => Some(b),
         Spec::Implication(predicate, consequent) => {
             if matches_predicate(predicate, properties) {
-                behavior(consequent, properties)
+                find_behavior(consequent, properties)
             }
             else {
                 None
@@ -63,3 +73,13 @@ fn behavior<'a>(spec: &'a Spec, properties: &ExecuterProperties) -> Option<&'a B
     }
 }
 
+impl Display for Failure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.output.is_empty() {
+            write!(f, "expected {}, got {}", self.expected, self.actual)
+        }
+        else {
+            write!(f, "expected {}, got {}\n{}", self.expected, self.actual, self.output)
+        }
+    }
+}

@@ -11,6 +11,6 @@ pub struct ExecuterProperties {
 }
 
 pub trait Executer {
-    fn run_test(info: &TestExecutionInfo) -> Result<Behavior>;
+    fn run_test(info: &TestExecutionInfo) -> Result<(String, Behavior)>;
     fn properties() -> ExecuterProperties;
 }

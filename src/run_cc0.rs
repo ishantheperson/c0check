@@ -1,10 +1,12 @@
-use std::ffi::CString;
-use std::process;
+use std::{os::unix::prelude::RawFd, process};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::ffi::CString;
+use std::mem::MaybeUninit;
 use lazy_static::lazy_static;
 use nix::{unistd, sys::wait::{self, WaitStatus}, sys::signal::Signal};
+use nix::fcntl::OFlag;
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
@@ -13,11 +15,11 @@ use crate::executer::*;
 pub struct CC0Executer();
 
 impl Executer for CC0Executer {
-    fn run_test(info: &TestExecutionInfo) -> Result<Behavior> {
+    fn run_test(info: &TestExecutionInfo) -> Result<(String, Behavior)> {
         let compilation_result = compile(info)?;
         match compilation_result {
-            Some(name) => execute(info, &name),
-            None => Ok(Behavior::CompileError)
+            Ok(name) => execute(info, &name),
+            Err(output) => Ok((output, Behavior::CompileError))
         }
     }
 
@@ -34,7 +36,6 @@ impl Executer for CC0Executer {
 
 lazy_static! {
     static ref DEVNULL: i32 = {
-        use nix::fcntl::OFlag;
         use nix::sys::stat::Mode;
         nix::fcntl::open("/dev/null", OFlag::O_WRONLY, Mode::empty()).expect("Couldn't open /dev/null")
     };
@@ -52,13 +53,14 @@ const STDERR_FILENO: i32 = 2;
 
 /// Timeout for compilation
 const COMPILATION_TIMEOUT: u32 = 15;
+/// Timeout for running tests
+const TEST_TIMEOUT: u32 = 10;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
-
 const EXEC_FAILURE_CODE: i32 = 100;
 const RUST_PANIC_CODE: i32 = 101;
 
-fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
+fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
     let compiler = CString::new(&*CC0_PATH.as_str()).unwrap();
 
     // Create args
@@ -71,21 +73,29 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     args.push(str_to_cstring("-o"));
     args.push(out_file.clone());
 
+    // Create a pipe to record stdout and stuff
+    let (read_pipe, write_pipe) = unistd::pipe2(OFlag::O_NONBLOCK).context("When creating a pipe to record CC0 output")?;
+
     match unsafe { unistd::fork().context("when spawning CC0")? } {
         unistd::ForkResult::Child => {
+            unistd::close(read_pipe).unwrap();
+            redirect_io(write_pipe);
             unistd::alarm::set(COMPILATION_TIMEOUT);
-            
-            unistd::dup2(*DEVNULL, STDOUT_FILENO).expect("Couldn't redirect stdout");
-            unistd::dup2(*DEVNULL, STDERR_FILENO).expect("Couldn't redirect stderr");
 
             let _ = unistd::execvp( &compiler, &args).expect("Couldn't exec!");
             process::exit(EXEC_FAILURE_CODE);
         },
+
         unistd::ForkResult::Parent { child } => {
-            match wait::waitpid(child, None).expect("Failed to wait() for compiler process") {
-                WaitStatus::Exited(_, 0) => Ok(Some(out_file)),
-                WaitStatus::Exited(_, 1) => Ok(None),
-                WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => Err(anyhow!("CC0 failed to invoke GCC")),
+            let status = wait::waitpid(child, None).expect("Failed to wait() for compiler process");
+            let output = read_from_pipe(read_pipe, write_pipe)?;
+            
+            match status {
+                WaitStatus::Exited(_, 0) => Ok(Ok(out_file)),
+                WaitStatus::Exited(_, 1) => Ok(Err(output)),
+                WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => {
+                    Err(anyhow!("CC0 failed to invoke GCC"))
+                },
                 WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")),
                 WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")),
                 WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")),
@@ -95,21 +105,18 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
     }
 }
 
-/// Timeout for running tests
-static TEST_TIMEOUT: u32 = 15;
-
-fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
+fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Behavior)> {
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
+
+    let (read_pipe, write_pipe) = unistd::pipe2(OFlag::O_NONBLOCK).context("When creating a pipe to record test output")?;
 
     match unsafe { unistd::fork().context("when spawning test process")? } {
         unistd::ForkResult::Child => {
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
-            
+            redirect_io(write_pipe);
+            unistd::close(read_pipe).unwrap();
             unistd::alarm::set(TEST_TIMEOUT);
-
-            unistd::dup2(*DEVNULL, STDOUT_FILENO).expect("Couldn't redirect stdout");
-            unistd::dup2(*DEVNULL, STDERR_FILENO).expect("Couldn't redirect stderr");
 
             let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[&result_env]);
             // Couldn't exec
@@ -118,7 +125,7 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
 
         unistd::ForkResult::Parent { child } => {
             let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
-            
+            let output = read_from_pipe(read_pipe, write_pipe)?;
             let result = match fs::read(&result_file) {
                 Ok(bytes) => {
                     fs::remove_file(Path::new(&result_file))
@@ -131,31 +138,56 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
             fs::remove_file(Path::new(&executable.to_str().unwrap()))
                 .context("when removing test program")?;
 
-            match status {
+            let behavior = match status {
                 WaitStatus::Exited(_, 0) => 
                     if result.len() == 5 {
                         let bytes = [result[1], result[2], result[3], result[4]];
-                        Ok(Behavior::Return(Some(i32::from_ne_bytes(bytes))))
+                        Behavior::Return(Some(i32::from_ne_bytes(bytes)))
                     }
                     else {
-                        Err(anyhow!("C0 program exited succesfully, but no return value was written"))
+                        return Err(anyhow!("C0 program exited succesfully, but no return value was written"))
                     },
-                WaitStatus::Exited(_, 1) => Ok(Behavior::Failure),
-                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec the test program")),
-                WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("Test program process panic'd")),
-                WaitStatus::Exited(_, status) => Err(anyhow!("Unexpected program exit status '{}'", status)),
+                WaitStatus::Exited(_, 1) => Behavior::Failure,
+                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => return Err(anyhow!("Failed to exec the test program")),
+                WaitStatus::Exited(_, RUST_PANIC_CODE) => return Err(anyhow!("Test program process panic'd")),
+                WaitStatus::Exited(_, status) => return Err(anyhow!("Unexpected program exit status '{}'", status)),
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
-                    Signal::SIGSEGV => Ok(Behavior::Segfault),
-                    Signal::SIGALRM => Ok(Behavior::InfiniteLoop),
-                    Signal::SIGFPE => Ok(Behavior::DivZero),
-                    Signal::SIGABRT => Ok(Behavior::Abort),
-                    other => Err(anyhow!("Program exited with unexpected signal '{}'", other))
+                    Signal::SIGSEGV => Behavior::Segfault,
+                    Signal::SIGALRM => Behavior::InfiniteLoop,
+                    Signal::SIGFPE => Behavior::DivZero,
+                    Signal::SIGABRT => Behavior::Abort,
+                    other => return Err(anyhow!("Program exited with unexpected signal '{}'", other))
                 }   
-                status => Err(anyhow!("Program unexpectedly failed: {:?}", status))
-            }
+                status => return Err(anyhow!("Program unexpectedly failed: {:?}", status))
+            };
+
+            Ok((output, behavior))
         },
     }
+}
+
+fn redirect_io(target_file: RawFd) {
+    unistd::dup2(target_file, STDOUT_FILENO).expect("Couldn't redirect stdout");
+    unistd::dup2(target_file, STDERR_FILENO).expect("Couldn't redirect stderr");
+}
+
+fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
+    // Capture CC0 output
+    unistd::close(write_pipe).unwrap();
+    let mut buf: [u8; 1024] = unsafe { MaybeUninit::uninit().assume_init() };
+    let num_bytes = match unistd::read(read_pipe, &mut buf) {
+        Ok(n) => n,
+        // We set O_NONBLOCK on the pipe and EAGAIN is raised if
+        // this read would block us. We only call this function
+        // after we have wait()'d for the process, so if
+        // we get EAGAIN we want to ignore it
+        Err(nix::Error::Sys(nix::errno::Errno::EAGAIN)) => 0,
+        err => err.context("When reading CC0 output")?
+    };
+    let output = String::from_utf8_lossy(&buf[..num_bytes]).to_string();
+    unistd::close(read_pipe).unwrap();
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -174,8 +206,8 @@ mod compile_tests {
             specs: vec![]
         };
 
-        let name = compile(&test.execution)?.ok_or(anyhow!("Test did not compile"))?;
-        assert_eq!(execute(&test.execution, &name)?, Behavior::Return(Some(0)));
+        let name = compile(&test.execution)?.map_err(|e| anyhow!(e))?;
+        assert_eq!(execute(&test.execution, &name)?.1, Behavior::Return(Some(0)));
 
         Ok(())
     }
