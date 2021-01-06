@@ -66,6 +66,9 @@ impl<'a> SpecParser<'a> {
         Ok(tests)
     }
     
+    // Pratt parser based on matklad's blog post
+    // https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
+
     /// Parses a spec
     /// 
     /// spec ::= <predicate> => <spec>

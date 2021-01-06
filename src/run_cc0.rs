@@ -38,16 +38,28 @@ lazy_static! {
         use nix::sys::stat::Mode;
         nix::fcntl::open("/dev/null", OFlag::O_WRONLY, Mode::empty()).expect("Couldn't open /dev/null")
     };
+
+    static ref CC0_PATH: String = {
+        match env::var("C0_HOME") {
+            Ok(path) => format!("{}/bin/cc0", path),
+            Err(_) => "cc0".to_string()
+        }
+    };
 }
 
-static STDOUT_FILENO: i32 = 1;
-static STDERR_FILENO: i32 = 2;
+const STDOUT_FILENO: i32 = 1;
+const STDERR_FILENO: i32 = 2;
 
 /// Timeout for compilation
-static COMPILATION_TIMEOUT: u32 = 15;
+const COMPILATION_TIMEOUT: u32 = 15;
+
+const CC0_GCC_FAILURE_CODE: i32 = 2;
+
+const EXEC_FAILURE_CODE: i32 = 100;
+const RUST_PANIC_CODE: i32 = 101;
 
 fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
-    let compiler = CString::new("/home/ishan/c0-developer/cc0/bin/cc0").unwrap();
+    let compiler = CString::new(&*CC0_PATH.as_str()).unwrap();
 
     // Create args
     let mut args: Vec<CString> = Vec::new();
@@ -67,13 +79,15 @@ fn compile(test: &TestExecutionInfo) -> Result<Option<CString>> {
             unistd::dup2(*DEVNULL, STDERR_FILENO).expect("Couldn't redirect stderr");
 
             let _ = unistd::execvp( &compiler, &args).expect("Couldn't exec!");
-            process::exit(2);
+            process::exit(EXEC_FAILURE_CODE);
         },
         unistd::ForkResult::Parent { child } => {
             match wait::waitpid(child, None).expect("Failed to wait() for compiler process") {
                 WaitStatus::Exited(_, 0) => Ok(Some(out_file)),
                 WaitStatus::Exited(_, 1) => Ok(None),
-                WaitStatus::Exited(_, 2) => Err(anyhow!("Failed to exec cc0")),
+                WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => Err(anyhow!("CC0 failed to invoke GCC")),
+                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")),
+                WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")),
                 WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")),
                 status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)) // unexpected
             }
@@ -99,7 +113,7 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
 
             let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[&result_env]);
             // Couldn't exec
-            process::exit(2);
+            process::exit(EXEC_FAILURE_CODE);
         },
 
         unistd::ForkResult::Parent { child } => {
@@ -127,8 +141,8 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
                         Err(anyhow!("C0 program exited succesfully, but no return value was written"))
                     },
                 WaitStatus::Exited(_, 1) => Ok(Behavior::Failure),
-                WaitStatus::Exited(_, 2) => Err(anyhow!("Failed to exec the test program")),
-                WaitStatus::Exited(_, 101) => Err(anyhow!("Test program process panic'd")),
+                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec the test program")),
+                WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("Test program process panic'd")),
                 WaitStatus::Exited(_, status) => Err(anyhow!("Unexpected program exit status '{}'", status)),
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
@@ -138,7 +152,7 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<Behavior> {
                     Signal::SIGABRT => Ok(Behavior::Abort),
                     other => Err(anyhow!("Program exited with unexpected signal '{}'", other))
                 }   
-                status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)) // unexpected
+                status => Err(anyhow!("Program unexpectedly failed: {:?}", status))
             }
         },
     }
