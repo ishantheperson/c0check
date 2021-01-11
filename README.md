@@ -2,8 +2,8 @@
 
 This is a re-implementation of cc0-check in Rust. The key enhancement
 is that the test cases are run in parallel, and output from failed tests
-is saved. On my i7-8700k, this runs 5 times faster than the 
-SML-based `cc0-check` (~2 minutes vs ~10).
+is saved. On my i7-8700k, this runs several times faster than the 
+SML-based `*-check` (~1 minute vs ~10 for CC0, ~6 minutes vs ~20 for C0VM).
 
 ## Requirements
 
@@ -18,12 +18,12 @@ The program can be built using `cargo build` and run with `cargo run`.
 The `--release` flag can be added in order to optimize (the difference can be substantial).
 
 You should also set the `C0_HOME` environment variable, or the program
-will use the `cc0` on your `$PATH`
+will use the `cc0`/`c0vm`/`coin-exec` on your `$PATH`
 
 ```
-$ cargo run -- <path to test folder>
+$ cargo run -- <test program=cc0|c0vm|coin> <path to test folder>
 # For example, 
-$ C0_HOME=~/c0-developer/cc0 cargo run -- ~/c0-developer/cc0/tests/
+$ C0_HOME=~/c0-developer/cc0 cargo run -- cc0 ~/c0-developer/cc0/tests/
   246/ 3742 ✅ Test passed: l5tests1-f12/thorin-opt-0.c0: return 225520
   246/ 3742 ✅ Test passed: l3tests0/exception03.c0: infloop
   246/ 3742 ✅ Test passed: ibhargav-voidptr-lval-casts/invalid-lval-cast.c1: error
@@ -42,6 +42,7 @@ CC0 timed out
 Test summary:
 ✅ Passed: 3741
 ❌ Failed: 0
+⌛ Timeouts: 0
 ⛔ Error: 1
 ```
 

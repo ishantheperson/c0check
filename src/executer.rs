@@ -10,7 +10,7 @@ pub struct ExecuterProperties {
     pub name: String,
 }
 
-pub trait Executer {
-    fn run_test(info: &TestExecutionInfo) -> Result<(String, Behavior)>;
-    fn properties() -> ExecuterProperties;
+pub trait Executer: Send + Sync {
+    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)>;
+    fn properties(&self) -> ExecuterProperties;
 }

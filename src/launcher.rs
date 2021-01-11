@@ -9,6 +9,7 @@ use lazy_static::lazy_static;
 use nix::unistd::{self, ForkResult, Pid};
 use nix::sys::wait::{self, WaitStatus};
 use nix::sys::signal::{self, Signal, SigAction, SigHandler, SigSet, SaFlags};
+use nix::libc::{STDOUT_FILENO, STDERR_FILENO};
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
@@ -17,15 +18,29 @@ use crate::executer::*;
 pub struct CC0Executer();
 
 impl Executer for CC0Executer {
-    fn run_test(info: &TestExecutionInfo) -> Result<(String, Behavior)> {
-        let compilation_result = compile(info)?;
+    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
+        let mut args: Vec<CString> = Vec::new();
+        args.extend(test.compiler_options.iter().map(string_to_cstring));
+        args.extend(test.sources.iter().map(string_to_cstring));
+        
+        let out_file: CString = str_to_cstring(&format!("{}/a.out{}", env::current_dir().unwrap().display(), unistd::gettid()));
+        args.push(str_to_cstring("-o"));
+        args.push(out_file.clone());
+
+        let compilation_result = compile(&args)?;
         match compilation_result {
-            Ok(name) => execute(info, &name),
+            Ok(()) => {
+                let exec_result = execute(test, &out_file, CC0_TEST_TIMEOUT);
+                if let Err(e) = fs::remove_file(Path::new(&out_file.to_str().unwrap())) {
+                    eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
+                }
+                exec_result
+            },
             Err(output) => Ok((output, Behavior::CompileError))
         }
     }
 
-    fn properties() -> ExecuterProperties {
+    fn properties(&self) -> ExecuterProperties {
         ExecuterProperties {
             libraries: true,
             garbage_collected: true,
@@ -36,39 +51,146 @@ impl Executer for CC0Executer {
     }
 }
 
-lazy_static! {
-    static ref CC0_PATH: String = {
-        match env::var("C0_HOME") {
-            Ok(path) => format!("{}/bin/cc0", path),
-            Err(_) => "cc0".to_string()
+pub struct C0VMExecuter();
+
+impl Executer for C0VMExecuter {
+    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
+        let mut args: Vec<CString> = Vec::new();
+        args.extend(test.compiler_options.iter().map(string_to_cstring));
+        args.extend(test.sources.iter().map(string_to_cstring));
+        
+        let out_file: CString = str_to_cstring(&format!("{}/a.out{}.bc0", env::current_dir().unwrap().display(), unistd::gettid()));
+        args.push(str_to_cstring("-bo"));
+        args.push(out_file.clone());
+
+        let compilation_result = compile(&args)?;
+        match compilation_result {
+            Ok(()) => {
+                let exec_result = 
+                    execute_with_args(
+                        test, 
+                        C0VM_PATH.as_ref(), 
+                        &[out_file.as_ref()], 
+                        C0VM_TEST_TIMEOUT);
+                
+                if let Err(e) = fs::remove_file(out_file.to_str().unwrap()) {
+                    eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
+                }
+                exec_result
+            }
+            Err(output) => Ok((output, Behavior::CompileError))
         }
-    };
+    }
+
+    fn properties(&self) -> ExecuterProperties {
+        ExecuterProperties {
+            libraries: true,
+            garbage_collected: false,
+            safe: true,
+            typechecked: true,
+            name: "cc0_c0vm".to_string()
+        }
+    }
 }
 
-const STDOUT_FILENO: i32 = 1;
-const STDERR_FILENO: i32 = 2;
+fn cc0_parse_waitstatus(status: WaitStatus) -> Result<Behavior> {
+    match status {
+        WaitStatus::Exited(_, 0) => 
+            if result.len() == 5 {
+                let bytes = [result[1], result[2], result[3], result[4]];
+                Behavior::Return(Some(i32::from_ne_bytes(bytes)))
+            }
+            else {
+                return Err(anyhow!("C0 program exited succesfully, but no return value was written"))
+            },
+        WaitStatus::Exited(_, 1) => Behavior::Failure,
+        WaitStatus::Exited(_, EXEC_FAILURE_CODE) => return Err(anyhow!("Failed to exec the test program")),
+        WaitStatus::Exited(_, RUST_PANIC_CODE) => return Err(anyhow!("Test program process panic'd")),
+        WaitStatus::Exited(_, status) => return Err(anyhow!("Unexpected program exit status '{}'", status)),
+        
+        WaitStatus::Signaled(_, signal, _) => match signal {
+            Signal::SIGSEGV => Behavior::Segfault,
+            Signal::SIGALRM => Behavior::InfiniteLoop,
+            Signal::SIGFPE => Behavior::DivZero,
+            Signal::SIGABRT => Behavior::Abort,
+            other => return Err(anyhow!("Program exited with unexpected signal '{}'", other))
+        }
+        status => return Err(anyhow!("Program unexpectedly failed: {:?}", status))
+    };
+
+}
+
+pub struct CoinExecuter();
+
+impl Executer for CoinExecuter {
+    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
+        // No need to compile tests for the C0in-trepter
+        let mut args: Vec<CString> = Vec::new();
+        args.extend(test.compiler_options.iter().map(string_to_cstring));
+        args.extend(test.sources.iter().map(string_to_cstring));
+
+        execute_with_args(test, COIN_EXEC_PATH.as_ref(), &args, COIN_TEST_TIMEOUT)
+    }
+
+    fn properties(&self) -> ExecuterProperties {
+        ExecuterProperties {
+            libraries: true,
+            garbage_collected: false,
+            safe: true,
+            typechecked: true,
+            name: "coin".to_string()
+        }
+    }
+}
+
+lazy_static! {
+    static ref CC0_PATH: CString = {
+        let path = match env::var("C0_HOME") {
+            Ok(path) => format!("{}/bin/cc0", path),
+            Err(_) => "cc0".to_string()
+        };
+
+        CString::new(path).unwrap()
+    };
+
+    static ref C0VM_PATH: CString = {
+        let path = match env::var("C0_HOME") {
+            Ok(path) => format!("{}/vm/c0vm", path),
+            Err(_) => "c0vm".to_string()
+        };
+
+        CString::new(path).unwrap()
+    };
+
+    static ref COIN_EXEC_PATH: CString = {
+        let path = match env::var("C0_HOME") {
+            Ok(path) => format!("{}/bin/coin-exec.bin", path),
+            Err(_) => "coin-exec".to_string()
+        };
+
+        CString::new(path).unwrap()
+    };    
+}
 
 /// Timeout for compilation
 const COMPILATION_TIMEOUT: u32 = 15;
-/// Timeout for running tests
-const TEST_TIMEOUT: u32 = 10;
+/// Timeout for running tests with the GCC backend
+const CC0_TEST_TIMEOUT: u32 = 10;
+/// Timeout for running tests in C0VM.
+/// C0VM is probably more than 2x as slow as GCC,
+/// but truly intensive tests should not be run in C0VM
+const C0VM_TEST_TIMEOUT: u32 = 20;
+/// Similar to C0VM, truly intensive tests should not be run in coin
+const COIN_TEST_TIMEOUT: u32 = 20;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
 const EXEC_FAILURE_CODE: i32 = 100;
 const RUST_PANIC_CODE: i32 = 101;
 
-fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
-    let compiler = CString::new(&*CC0_PATH.as_str()).unwrap();
-
-    // Create args
-    let mut args: Vec<CString> = Vec::new();
-    args.push(compiler.clone());
-    args.extend(test.compiler_options.iter().map(string_to_cstring));
-    args.extend(test.sources.iter().map(string_to_cstring));
-    
-    let out_file: CString = str_to_cstring(&format!("{}/a.out{}", env::current_dir().unwrap().display(), unistd::gettid()));
-    args.push(str_to_cstring("-o"));
-    args.push(out_file.clone());
+fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
+    // Create argv
+    let mut argv = vec![CC0_PATH.as_ref()];
+    argv.extend(args.iter().map(|arg| arg.as_ref()));
 
     // Create a pipe to record stdout and stuff
     let (read_pipe, write_pipe) = unistd::pipe().context("When creating a pipe to record CC0 output")?;
@@ -82,7 +204,9 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
 
             extern "C" fn alarm_handler(_signal: i32) {
                 unsafe {
-                    // Todo: kill for timeout
+                    // It's possible the child process exits between
+                    // the alarm going off and this line being reached, so then
+                    // we would be sending kill to a nonexistent process
                     let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
                     signal::sigaction(Signal::SIGALRM, &SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty())).unwrap();
                     signal::raise(Signal::SIGALRM).unwrap();
@@ -100,7 +224,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
                 ForkResult::Child => {
                     // Set new process group
                     unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
-                    let e = unistd::execvp(&compiler, &args).unwrap_err();
+                    let e = unistd::execvp(CC0_PATH.as_ref(), &argv).unwrap_err();
                     println!("Exec error: {:#}", e);
                     process::exit(EXEC_FAILURE_CODE);
                 },
@@ -113,7 +237,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
             unsafe { child_pid = Some(child) };
 
             unistd::alarm::set(COMPILATION_TIMEOUT);
-            let status = wait::waitpid(child, None).expect("Failed ot wait for real compiler process");
+            let status = wait::waitpid(child, None).expect("Failed to wait for real compiler process");
             match status {
                 WaitStatus::Exited(_, i) => process::exit(i),
                 WaitStatus::Signaled(_, signal, _) => {
@@ -129,7 +253,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
             let status = wait::waitpid(child, None).expect("Failed to wait() for compiler process");
             
             match status {
-                WaitStatus::Exited(_, 0) => Ok(Ok(out_file)),
+                WaitStatus::Exited(_, 0) => Ok(Ok(())),
                 WaitStatus::Exited(_, 1) => Ok(Err(output)),
                 WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => {
                     Err(anyhow!("CC0 failed to invoke GCC"))
@@ -143,9 +267,21 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
     }
 }
 
-fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Behavior)> {
+fn execute<Executable: AsRef<CStr>>(info: &TestExecutionInfo, executable: Executable, timeout: u32) -> Result<(String, Behavior)> {
+    execute_with_args::<Executable, &CStr>(info, executable, &[], timeout)
+}
+
+fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
+    info: &TestExecutionInfo, 
+    executable: Executable, 
+    args: &[Arg], 
+    timeout: u32) -> Result<(String, Behavior)> 
+{
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
+
+    let mut argv = vec![executable.as_ref()];
+    argv.extend(args.iter().map(|arg| arg.as_ref()));
 
     let (read_pipe, write_pipe) = unistd::pipe().context("When creating a pipe to record test output")?;
 
@@ -154,9 +290,9 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Be
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
             redirect_io(write_pipe);
             unistd::close(read_pipe).unwrap();
-            unistd::alarm::set(TEST_TIMEOUT);
+            unistd::alarm::set(timeout);
 
-            let _ = unistd::execve::<&CString, &CString>(executable, &[executable], &[&result_env]);
+            let _ = unistd::execve(executable.as_ref(), &argv, &[&result_env]);
             // Couldn't exec
             process::exit(EXEC_FAILURE_CODE);
         },
@@ -165,22 +301,25 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Be
             let output = read_from_pipe(read_pipe, write_pipe)?;
             let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
             let result = match fs::read(&result_file) {
-                Ok(bytes) => {
+                Ok(result) => {
                     fs::remove_file(Path::new(&result_file))
                         .context("when removing test program result file")?;                    
-                    bytes
-                }
-                Err(_) => Vec::new()
-            };
-            
-            fs::remove_file(Path::new(&executable.to_str().unwrap()))
-                .context("when removing test program")?;
-
-            let behavior = match status {
-                WaitStatus::Exited(_, 0) => 
+                    
                     if result.len() == 5 {
                         let bytes = [result[1], result[2], result[3], result[4]];
-                        Behavior::Return(Some(i32::from_ne_bytes(bytes)))
+                        Some(i32::from_ne_bytes(bytes))
+                    }
+                    else {
+                        None
+                    }
+                }
+                Err(_) => None
+            };
+            
+            let behavior = match status {
+                WaitStatus::Exited(_, 0) => 
+                    if let Some(exit_code) = result {
+                        Behavior::Return(Some(exit_code))
                     }
                     else {
                         return Err(anyhow!("C0 program exited succesfully, but no return value was written"))
@@ -196,7 +335,7 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Be
                     Signal::SIGFPE => Behavior::DivZero,
                     Signal::SIGABRT => Behavior::Abort,
                     other => return Err(anyhow!("Program exited with unexpected signal '{}'", other))
-                }   
+                }
                 status => return Err(anyhow!("Program unexpectedly failed: {:?}", status))
             };
 
@@ -249,8 +388,9 @@ mod compile_tests {
             specs: vec![]
         };
 
-        let name = compile(&test.execution)?.map_err(|e| anyhow!(e))?;
-        assert_eq!(execute(&test.execution, &name)?.1, Behavior::Return(Some(0)));
+        let args= [CString::new("test_resources/test.c0").unwrap()];
+        compile(&args)?.map_err(|e| anyhow!(e))?;
+        assert_eq!(execute(&test.execution, &CString::new("a.out").unwrap(), 5)?.1, Behavior::Return(Some(0)));
 
         Ok(())
     }

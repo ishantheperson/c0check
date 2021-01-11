@@ -4,8 +4,8 @@ use anyhow::Result;
 use crate::executer::*;
 use crate::spec::*;
 
-pub fn run_test<T: Executer>(test: &TestInfo) -> Result<TestResult> {
-    let properties = T::properties();
+pub fn run_test(executer: &Box<dyn Executer>, test: &TestInfo) -> Result<TestResult> {
+    let properties = executer.properties();
     
     // See if any behaviors apply
     let mut behaviors: Vec<&Behavior> = Vec::new();
@@ -19,7 +19,7 @@ pub fn run_test<T: Executer>(test: &TestInfo) -> Result<TestResult> {
         return Ok(TestResult::Success)
     }
     
-    let (output, result) = T::run_test(&test.execution)?;
+    let (output, result) = executer.run_test(&test.execution)?;
     for &behavior in behaviors.iter() {
         if behavior != &result {
             return Ok(TestResult::Mismatch(Failure { expected: *behavior, actual: result, output }))
@@ -41,6 +41,12 @@ pub struct Failure {
     pub expected: Behavior,
     pub actual: Behavior, 
     pub output: String    
+}
+
+impl Failure {
+    pub fn is_timeout(&self) -> bool {
+        self.actual == Behavior::InfiniteLoop
+    }    
 }
 
 fn matches_predicate(predicate: &ImplementationPredicate, properties: &ExecuterProperties) -> bool {
