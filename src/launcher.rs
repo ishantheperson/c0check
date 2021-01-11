@@ -93,37 +93,17 @@ impl Executer for C0VMExecuter {
     }
 }
 
-fn cc0_parse_waitstatus(status: WaitStatus) -> Result<Behavior> {
-    match status {
-        WaitStatus::Exited(_, 0) => 
-            if result.len() == 5 {
-                let bytes = [result[1], result[2], result[3], result[4]];
-                Behavior::Return(Some(i32::from_ne_bytes(bytes)))
-            }
-            else {
-                return Err(anyhow!("C0 program exited succesfully, but no return value was written"))
-            },
-        WaitStatus::Exited(_, 1) => Behavior::Failure,
-        WaitStatus::Exited(_, EXEC_FAILURE_CODE) => return Err(anyhow!("Failed to exec the test program")),
-        WaitStatus::Exited(_, RUST_PANIC_CODE) => return Err(anyhow!("Test program process panic'd")),
-        WaitStatus::Exited(_, status) => return Err(anyhow!("Unexpected program exit status '{}'", status)),
-        
-        WaitStatus::Signaled(_, signal, _) => match signal {
-            Signal::SIGSEGV => Behavior::Segfault,
-            Signal::SIGALRM => Behavior::InfiniteLoop,
-            Signal::SIGFPE => Behavior::DivZero,
-            Signal::SIGABRT => Behavior::Abort,
-            other => return Err(anyhow!("Program exited with unexpected signal '{}'", other))
-        }
-        status => return Err(anyhow!("Program unexpectedly failed: {:?}", status))
-    };
-
-}
-
 pub struct CoinExecuter();
 
 impl Executer for CoinExecuter {
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
+        // Check if it uses C1, if so then skip the test
+        for source in test.sources.iter() {
+            if source.ends_with(".c1") {
+                return Ok(("<C1 test skipped>".to_string(), Behavior::Skipped))
+            }
+        }
+
         // No need to compile tests for the C0in-trepter
         let mut args: Vec<CString> = Vec::new();
         args.extend(test.compiler_options.iter().map(string_to_cstring));
@@ -325,6 +305,9 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
                         return Err(anyhow!("C0 program exited succesfully, but no return value was written"))
                     },
                 WaitStatus::Exited(_, 1) => Behavior::Failure,
+                // Coin only. Hopefully other exit codes don't conflict
+                WaitStatus::Exited(_, 2) => Behavior::CompileError,
+                WaitStatus::Exited(_, 4) => Behavior::Failure,
                 WaitStatus::Exited(_, EXEC_FAILURE_CODE) => return Err(anyhow!("Failed to exec the test program")),
                 WaitStatus::Exited(_, RUST_PANIC_CODE) => return Err(anyhow!("Test program process panic'd")),
                 WaitStatus::Exited(_, status) => return Err(anyhow!("Unexpected program exit status '{}'", status)),

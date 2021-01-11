@@ -46,7 +46,9 @@ pub enum Behavior {
     Failure,
     Segfault,
     DivZero,
-    Return(Option<i32>)
+    Return(Option<i32>),
+
+    Skipped
 }
 
 impl PartialEq for Behavior {
@@ -66,6 +68,8 @@ impl PartialEq for Behavior {
                     (_, None) => true,
                     (Some(a), Some(b)) => a == b
                 },
+            (Skipped, _) => true,
+            (_, Skipped) => true,
             _ => false
         }
     }
@@ -147,7 +151,9 @@ impl Display for Behavior {
             Segfault => write!(f, "segfault"),
             DivZero => write!(f, "div-by-zero"),
             Return(None) => write!(f, "return *"),
-            Return(Some(x)) => write!(f, "return {}", x)
+            Return(Some(x)) => write!(f, "return {}", x),
+            
+            Skipped => write!(f, "<skipped>")
         }
     }
 }

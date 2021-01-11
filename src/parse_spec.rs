@@ -5,7 +5,9 @@ use crate::spec::*;
 
 /// Parses a 'spec' string with the given options
 ///
+///```text
 /// spec ::= <predicate> => <spec>
+///        | <spec> ; <spec>
 ///        | <behavior>
 ///
 /// predicate ::= lib | typechecked | gc | safe | false | <ident>
@@ -15,6 +17,7 @@ use crate::spec::*;
 ///
 /// behavior ::= error | infloop | abort | failure | segfault | div-by-zero
 ///            | runs | return * | return <int>
+///```
 pub fn parse(input: &str, options: ParseOptions) -> Result<Specs, SpecParseError> {
     let mut parser = SpecParser::new(input, options);
     parser.parse()
@@ -71,8 +74,10 @@ impl<'a> SpecParser<'a> {
 
     /// Parses a spec
     /// 
+    ///```text
     /// spec ::= <predicate> => <spec>
     ///        | <behavior>
+    ///```
     fn parse_spec(&mut self) -> Result<Spec, SpecParseError> {
         use SpecParseError::*;
         use SpecToken::*;
@@ -106,10 +111,12 @@ impl<'a> SpecParser<'a> {
 
     /// Parses an implementation predicate
     /// 
+    ///```text
     /// predicate ::= lib | typechecked | gc | safe | false | <ident>
     ///             | ! <predicate>
     ///             | <predicate>, <predicate>
     ///             | <predicate> or <predicate> 
+    ///```
     fn parse_implementation(&mut self, min_bp: i32) -> Result<ImplementationPredicate, SpecParseError> {
         use SpecParseError::*;
         use ImplementationPredicate::*;
@@ -187,8 +194,10 @@ impl<'a> SpecParser<'a> {
 
     /// Parses a program expected behavior
     /// 
+    ///```text
     /// behavior ::= error | infloop | abort | failure | segfault | div-by-zero
     ///            | runs | return * | return <int>
+    ///```
     fn parse_behavior(&mut self) -> Result<Behavior, SpecParseError> {
         use SpecParseError::*;
         use Behavior::*;
