@@ -180,6 +180,9 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
 
+            #[allow(non_upper_case_globals)]
+            /// The signal handler needs to access this, and it needs
+            /// to be updated after the fork()
             static mut child_pid: Option<Pid> = None;
 
             extern "C" fn alarm_handler(_signal: i32) {
@@ -188,7 +191,8 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                     // the alarm going off and this line being reached, so then
                     // we would be sending kill to a nonexistent process
                     let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
-                    signal::sigaction(Signal::SIGALRM, &SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty())).unwrap();
+                    let default_action = SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty()));
+                    signal::sigaction(Signal::SIGALRM, &default_action).unwrap();
                     signal::raise(Signal::SIGALRM).unwrap();
                 }
             }
