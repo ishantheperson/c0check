@@ -191,7 +191,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                     // the alarm going off and this line being reached, so then
                     // we would be sending kill to a nonexistent process
                     let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
-                    let default_action = SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty()));
+                    let default_action = SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty());
                     signal::sigaction(Signal::SIGALRM, &default_action).unwrap();
                     signal::raise(Signal::SIGALRM).unwrap();
                 }
