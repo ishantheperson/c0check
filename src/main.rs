@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         [_, path] => (Box::new(CC0Executer()) as Box<dyn Executer>, path),
         [_, executer_name, path] => (parse_executer(executer_name), path),
         _ => {
-            print_usage("usage: c0check <path to test directory>");
+            print_usage("");
         }
     };
 

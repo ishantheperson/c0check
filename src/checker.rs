@@ -40,7 +40,7 @@ pub enum TestResult {
 pub struct Failure {
     pub expected: Behavior,
     pub actual: Behavior, 
-    pub output: String    
+    pub output: String
 }
 
 impl Failure {

@@ -24,12 +24,12 @@ will use the `cc0`/`c0vm`/`coin-exec` on your `$PATH`
 $ cargo run -- <test program=cc0|c0vm|coin> <path to test folder>
 # For example, 
 $ C0_HOME=~/c0-developer/cc0 cargo run -- cc0 ~/c0-developer/cc0/tests/
-  246/ 3742 ✅ Test passed: l5tests1-f12/thorin-opt-0.c0: return 225520
-  246/ 3742 ✅ Test passed: l3tests0/exception03.c0: infloop
-  246/ 3742 ✅ Test passed: ibhargav-voidptr-lval-casts/invalid-lval-cast.c1: error
-  246/ 3742 ✅ Test passed: l5tests1-f12/isildur-likes-useless-code.c0: return 0
-  246/ 3742 ✅ Test passed: l2tests1/ankylosaurus-return01.c0: return 3
-  246/ 3742 ✅ Test passed: l4tests1-f11/harrier-exception_2.c0: segfault
+ 246/3742 ✅ Test passed: l5tests1-f12/thorin-opt-0.c0: return 225520
+ 246/3742 ✅ Test passed: l3tests0/exception03.c0: infloop
+ 246/3742 ✅ Test passed: ibhargav-voidptr-lval-casts/invalid-lval-cast.c1: error
+ 246/3742 ✅ Test passed: l5tests1-f12/isildur-likes-useless-code.c0: return 0
+ 246/3742 ✅ Test passed: l2tests1/ankylosaurus-return01.c0: return 3
+ 246/3742 ✅ Test passed: l4tests1-f11/harrier-exception_2.c0: segfault
 ...
 
 Failed tests:
