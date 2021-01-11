@@ -13,7 +13,6 @@ lto = true
 logos = "0.11.4"
 nix = "0.19.0"
 rayon = "1.5"
-indicatif = {version = "0.15.0", features = ["rayon"]}
 lazy_static = "1.4.0"
 anyhow = "1.0"
 thiserror = "1.0.23"

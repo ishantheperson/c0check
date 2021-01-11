@@ -1,16 +1,16 @@
 # c0check - CC0 Testing Harness
 
 This is a re-implementation of cc0-check in Rust. The key enhancement
-is that the test cases are run in parallel. On my i7-8700k, this runs
-10 times faster than the SML based `cc0-check`. 
+is that the test cases are run in parallel, and output from failed tests
+is saved. On my i7-8700k, this runs 5 times faster than the 
+SML-based `cc0-check` (~2 minutes vs ~10).
 
 ## Requirements
 
-This program uses `gettid()` to generate unique per-thread IDs, 
-so it only works on Linux. This could change once the Rust `ThreadId::as_u64()`
-is stabilized (I didn't use nightly Rust, but that might change depending
-on how much of a burden it is). 
-
+This program uses `gettid()` to generate unique per-thread IDs and `pipe2`, 
+so it only works on Linux. These two could be easily changed by using
+an atomic usize for `gettid` and by using `fcntl` to set `O_NONBLOCK` 
+on the pipes used to capture `stdout` and `stderr`.
 
 ## Usage
 
@@ -24,8 +24,12 @@ will use the `cc0` on your `$PATH`
 $ cargo run -- <path to test folder>
 # For example, 
 $ C0_HOME=~/c0-developer/cc0 cargo run -- ~/c0-developer/cc0/tests/
-Running tests: [00:00:22 elapsed] ###########>----------------------------  1030/3736   [00:01:00 remaining]
-
+  246/ 3742 ✅ Test passed: l5tests1-f12/thorin-opt-0.c0: return 225520
+  246/ 3742 ✅ Test passed: l3tests0/exception03.c0: infloop
+  246/ 3742 ✅ Test passed: ibhargav-voidptr-lval-casts/invalid-lval-cast.c1: error
+  246/ 3742 ✅ Test passed: l5tests1-f12/isildur-likes-useless-code.c0: return 0
+  246/ 3742 ✅ Test passed: l2tests1/ankylosaurus-return01.c0: return 3
+  246/ 3742 ✅ Test passed: l4tests1-f11/harrier-exception_2.c0: segfault
 ...
 
 Failed tests:
@@ -36,14 +40,14 @@ Errors:
 CC0 timed out
 
 Test summary:
-✅ Passed: 3735
+✅ Passed: 3741
 ❌ Failed: 0
 ⛔ Error: 1
 ```
 
-This will show a progress bar with an ETA to completion. 
 After all tests finish, a summary will be displayed, containing
 an explanation of which tests failed, and which tests encountered an error.
+If a test failed, its output will also be included.
 
 ## Known Issues
 
@@ -52,6 +56,5 @@ If you halt the program with CTRL-C in the middle of testing, then these files
 might stick around. You would have to delete them manually.
 
 It seems that CC0 (incorrectly and nondeterministically) fails to compile 
-some tests unexpectedly, when the compiler is run in parallel.
-Could also possibily be a WSL issue. 
-It's hard to reproduce and doesn't seem to happen without --release.
+some tests unexpectedly, when the compiler is run in parallel. Haven't seen
+this happen recently so it might be fixed.

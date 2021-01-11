@@ -65,7 +65,7 @@ fn read_source_test(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
         let mut sources: Vec<String> = Vec::new();
         let mut compiler_options: Vec<String> = Vec::new();
         for arg in cmdline.split_ascii_whitespace() {
-            if !arg.starts_with('-') && ([".c0", ".c1", ".h0", ".h1"].iter().any(|ext| arg.ends_with(ext))) {
+            if !arg.starts_with('-') && ([".c0", ".c1", ".h0", ".h1"].iter().any(|&ext| arg.ends_with(ext))) {
                 let path = dir.join(arg);
                 sources.push(path.into_os_string().into_string().expect("Invalid path character"));
             }

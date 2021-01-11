@@ -1,12 +1,14 @@
-use std::{os::unix::prelude::RawFd, process};
+use std::process;
+use std::os::unix::io::RawFd;
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use lazy_static::lazy_static;
-use nix::{unistd, sys::wait::{self, WaitStatus}, sys::signal::Signal};
-use nix::fcntl::OFlag;
+use nix::unistd::{self, ForkResult, Pid};
+use nix::sys::wait::{self, WaitStatus};
+use nix::sys::signal::{self, Signal, SigAction, SigHandler, SigSet, SaFlags};
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
@@ -35,11 +37,6 @@ impl Executer for CC0Executer {
 }
 
 lazy_static! {
-    static ref DEVNULL: i32 = {
-        use nix::sys::stat::Mode;
-        nix::fcntl::open("/dev/null", OFlag::O_WRONLY, Mode::empty()).expect("Couldn't open /dev/null")
-    };
-
     static ref CC0_PATH: String = {
         match env::var("C0_HOME") {
             Ok(path) => format!("{}/bin/cc0", path),
@@ -74,21 +71,62 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
     args.push(out_file.clone());
 
     // Create a pipe to record stdout and stuff
-    let (read_pipe, write_pipe) = unistd::pipe2(OFlag::O_NONBLOCK).context("When creating a pipe to record CC0 output")?;
+    let (read_pipe, write_pipe) = unistd::pipe().context("When creating a pipe to record CC0 output")?;
 
     match unsafe { unistd::fork().context("when spawning CC0")? } {
-        unistd::ForkResult::Child => {
+        ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
-            unistd::alarm::set(COMPILATION_TIMEOUT);
 
-            let _ = unistd::execvp( &compiler, &args).expect("Couldn't exec!");
-            process::exit(EXEC_FAILURE_CODE);
+            static mut child_pid: Option<Pid> = None;
+
+            extern "C" fn alarm_handler(_signal: i32) {
+                unsafe {
+                    // Todo: kill for timeout
+                    let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
+                    signal::sigaction(Signal::SIGALRM, &SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty())).unwrap();
+                    signal::raise(Signal::SIGALRM).unwrap();
+                }
+            }
+            
+            let alarm_action = SigAction::new(
+                SigHandler::Handler(alarm_handler as extern "C" fn(i32)), 
+                SaFlags::SA_RESTART, 
+                SigSet::all());
+            
+            unsafe { signal::sigaction(Signal::SIGALRM, &alarm_action).unwrap() };
+
+            let child = match unsafe { unistd::fork().expect("when really spawning cc0") } {
+                ForkResult::Child => {
+                    // Set new process group
+                    unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
+                    let e = unistd::execvp(&compiler, &args).unwrap_err();
+                    println!("Exec error: {:#}", e);
+                    process::exit(EXEC_FAILURE_CODE);
+                },
+
+                ForkResult::Parent { child } => {
+                    child
+                }
+            };
+
+            unsafe { child_pid = Some(child) };
+
+            unistd::alarm::set(COMPILATION_TIMEOUT);
+            let status = wait::waitpid(child, None).expect("Failed ot wait for real compiler process");
+            match status {
+                WaitStatus::Exited(_, i) => process::exit(i),
+                WaitStatus::Signaled(_, signal, _) => {
+                    signal::raise(signal).unwrap();
+                    unreachable!()
+                },
+                other => panic!("Really unexpected exit status: {:?}", other)
+            }
         },
 
-        unistd::ForkResult::Parent { child } => {
+        ForkResult::Parent { child } => {
+            let output = read_from_pipe(read_pipe, write_pipe).unwrap_or("<couldn't read output>".to_string());
             let status = wait::waitpid(child, None).expect("Failed to wait() for compiler process");
-            let output = read_from_pipe(read_pipe, write_pipe)?;
             
             match status {
                 WaitStatus::Exited(_, 0) => Ok(Ok(out_file)),
@@ -99,7 +137,7 @@ fn compile(test: &TestExecutionInfo) -> Result<Result<CString, String>> {
                 WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")),
                 WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")),
                 WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")),
-                status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)) // unexpected
+                status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status))
             }
         }
     }
@@ -109,10 +147,10 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Be
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
 
-    let (read_pipe, write_pipe) = unistd::pipe2(OFlag::O_NONBLOCK).context("When creating a pipe to record test output")?;
+    let (read_pipe, write_pipe) = unistd::pipe().context("When creating a pipe to record test output")?;
 
     match unsafe { unistd::fork().context("when spawning test process")? } {
-        unistd::ForkResult::Child => {
+        ForkResult::Child => {
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
             redirect_io(write_pipe);
             unistd::close(read_pipe).unwrap();
@@ -123,9 +161,9 @@ fn execute(info: &TestExecutionInfo, executable: &CString) -> Result<(String, Be
             process::exit(EXEC_FAILURE_CODE);
         },
 
-        unistd::ForkResult::Parent { child } => {
-            let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
+        ForkResult::Parent { child } => {
             let output = read_from_pipe(read_pipe, write_pipe)?;
+            let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
             let result = match fs::read(&result_file) {
                 Ok(bytes) => {
                     fs::remove_file(Path::new(&result_file))
@@ -173,20 +211,25 @@ fn redirect_io(target_file: RawFd) {
 }
 
 fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
+    const PIPE_CAPACITY: usize = 65536;
+    
     // Capture CC0 output
     unistd::close(write_pipe).unwrap();
-    let mut buf: [u8; 1024] = unsafe { MaybeUninit::uninit().assume_init() };
-    let num_bytes = match unistd::read(read_pipe, &mut buf) {
-        Ok(n) => n,
-        // We set O_NONBLOCK on the pipe and EAGAIN is raised if
-        // this read would block us. We only call this function
-        // after we have wait()'d for the process, so if
-        // we get EAGAIN we want to ignore it
-        Err(nix::Error::Sys(nix::errno::Errno::EAGAIN)) => 0,
-        err => err.context("When reading CC0 output")?
-    };
-    let output = String::from_utf8_lossy(&buf[..num_bytes]).to_string();
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(PIPE_CAPACITY);
+
+    loop {
+        let mut buf: [u8; PIPE_CAPACITY] = unsafe { MaybeUninit::uninit().assume_init() };
+        let num_bytes = unistd::read(read_pipe, &mut buf).context("When reading CC0 output")?;
+        if num_bytes == 0 {
+            break;
+        }
+
+        bytes.extend(buf[..num_bytes].into_iter());
+    }
+
     unistd::close(read_pipe).unwrap();
+    let output = String::from_utf8_lossy(&bytes).to_string();
     Ok(output)
 }
 
