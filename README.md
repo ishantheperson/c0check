@@ -7,10 +7,10 @@ SML-based `*-check` (~1 minute vs ~10 for CC0, ~6 minutes vs ~20 for C0VM).
 
 ## Requirements
 
-This program uses `gettid()` to generate unique per-thread IDs and `pipe2`, 
-so it only works on Linux. These two could be easily changed by using
-an atomic usize for `gettid` and by using `fcntl` to set `O_NONBLOCK` 
-on the pipes used to capture `stdout` and `stderr`.
+This program should work on Linux and MacOS. Note that since this program
+spawns a lot of processes, it might not work well on the Andrew Linux servers.
+You can set `RAYON_NUM_THREADS` to something low to limit the resource 
+usage of this program.
 
 ## Usage
 
@@ -18,7 +18,8 @@ The program can be built using `cargo build` and run with `cargo run`.
 The `--release` flag can be added in order to optimize (the difference can be substantial).
 
 You should also set the `C0_HOME` environment variable, or the program
-will use the `cc0`/`c0vm`/`coin-exec` on your `$PATH`
+will use the `cc0`/`c0vm`/`coin-exec` on your `$PATH`, which might be
+incorrect for development usage
 
 ```
 $ cargo run -- <test program=cc0|c0vm|coin> <path to test folder>

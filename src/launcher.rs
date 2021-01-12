@@ -1,8 +1,11 @@
+#![allow(non_upper_case_globals)]
+
 use std::process;
 use std::os::unix::io::RawFd;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use lazy_static::lazy_static;
@@ -23,7 +26,13 @@ impl Executer for CC0Executer {
         args.extend(test.compiler_options.iter().map(string_to_cstring));
         args.extend(test.sources.iter().map(string_to_cstring));
         
-        let out_file: CString = str_to_cstring(&format!("{}/a.out{}", env::current_dir().unwrap().display(), unistd::gettid()));
+        static mut test_counter: AtomicUsize = AtomicUsize::new(0);
+
+        let out_file: CString = unsafe {
+            let current_dir = env::current_dir().unwrap();
+            let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
+            str_to_cstring(&format!("{}/a.out{}", current_dir.display(), next_id))
+        };
         args.push(str_to_cstring("-o"));
         args.push(out_file.clone());
 
@@ -59,7 +68,13 @@ impl Executer for C0VMExecuter {
         args.extend(test.compiler_options.iter().map(string_to_cstring));
         args.extend(test.sources.iter().map(string_to_cstring));
         
-        let out_file: CString = str_to_cstring(&format!("{}/a.out{}.bc0", env::current_dir().unwrap().display(), unistd::gettid()));
+        static mut test_counter: AtomicUsize = AtomicUsize::new(0);
+
+        let out_file: CString = unsafe {
+            let current_dir = env::current_dir().unwrap();
+            let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
+            str_to_cstring(&format!("{}/a.out{}.bc0", current_dir.display(), next_id))
+        };
         args.push(str_to_cstring("-bo"));
         args.push(out_file.clone());
 
@@ -124,28 +139,38 @@ impl Executer for CoinExecuter {
 }
 
 lazy_static! {
+    static ref C0_HOME: Option<String> = {
+        env::var("C0_HOME").ok().map(|path| {
+            let pathbuf = PathBuf::from(&path);
+            fs::canonicalize(pathbuf).unwrap_or_else(|err| {
+                eprintln!("Error: C0_HOME='{}': {:#}", path, err);
+                process::exit(1)
+            }).to_str().unwrap().to_string()        
+        })
+    };
+
     static ref CC0_PATH: CString = {
-        let path = match env::var("C0_HOME") {
-            Ok(path) => format!("{}/bin/cc0", path),
-            Err(_) => "cc0".to_string()
+        let path = match C0_HOME.as_ref() {
+            Some(path) => format!("{}/bin/cc0", path),
+            None => "cc0".to_string()
         };
 
         CString::new(path).unwrap()
     };
 
     static ref C0VM_PATH: CString = {
-        let path = match env::var("C0_HOME") {
-            Ok(path) => format!("{}/vm/c0vm", path),
-            Err(_) => "c0vm".to_string()
+        let path = match C0_HOME.as_ref() {
+            Some(path) => format!("{}/vm/c0vm", path),
+            None => "c0vm".to_string()
         };
 
         CString::new(path).unwrap()
     };
 
     static ref COIN_EXEC_PATH: CString = {
-        let path = match env::var("C0_HOME") {
-            Ok(path) => format!("{}/bin/coin-exec.bin", path),
-            Err(_) => "coin-exec".to_string()
+        let path = match C0_HOME.as_ref() {
+            Some(path) => format!("{}/bin/coin-exec.bin", path),
+            None => "coin-exec".to_string()
         };
 
         CString::new(path).unwrap()
@@ -180,7 +205,6 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
 
-            #[allow(non_upper_case_globals)]
             /// The signal handler needs to access this, and it needs
             /// to be updated after the fork()
             static mut child_pid: Option<Pid> = None;
@@ -198,7 +222,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
             }
             
             let alarm_action = SigAction::new(
-                SigHandler::Handler(alarm_handler as extern "C" fn(i32)), 
+                SigHandler::Handler(alarm_handler), 
                 SaFlags::SA_RESTART, 
                 SigSet::all());
             
@@ -208,8 +232,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                 ForkResult::Child => {
                     // Set new process group
                     unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
-                    let e = unistd::execvp(CC0_PATH.as_ref(), &argv).unwrap_err();
-                    println!("Exec error: {:#}", e);
+                    let _ = unistd::execvp(CC0_PATH.as_ref(), &argv);
                     process::exit(EXEC_FAILURE_CODE);
                 },
 
@@ -242,10 +265,10 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                 WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => {
                     Err(anyhow!("CC0 failed to invoke GCC"))
                 },
-                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")),
-                WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")),
-                WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")),
-                status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status))
+                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")).context(output),
+                WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")).context(output),
+                WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")).context(output),
+                status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)).context(output)
             }
         }
     }
@@ -276,7 +299,7 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
             unistd::close(read_pipe).unwrap();
             unistd::alarm::set(timeout);
 
-            let _ = unistd::execve(executable.as_ref(), &argv, &[&result_env]);
+            let _err = unistd::execve(executable.as_ref(), &argv, &[&result_env]).unwrap_err();
             // Couldn't exec
             process::exit(EXEC_FAILURE_CODE);
         },
@@ -312,18 +335,18 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
                 // Coin only. Hopefully other exit codes don't conflict
                 WaitStatus::Exited(_, 2) => Behavior::CompileError,
                 WaitStatus::Exited(_, 4) => Behavior::Failure,
-                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => return Err(anyhow!("Failed to exec the test program")),
-                WaitStatus::Exited(_, RUST_PANIC_CODE) => return Err(anyhow!("Test program process panic'd")),
-                WaitStatus::Exited(_, status) => return Err(anyhow!("Unexpected program exit status '{}'", status)),
+                WaitStatus::Exited(_, EXEC_FAILURE_CODE) => return Err(anyhow!("Failed to exec the test program")).context(output),
+                WaitStatus::Exited(_, RUST_PANIC_CODE) => return Err(anyhow!("Test program process panic'd")).context(output),
+                WaitStatus::Exited(_, status) => return Err(anyhow!("Unexpected program exit status '{}'", status)).context(output),
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
                     Signal::SIGSEGV => Behavior::Segfault,
                     Signal::SIGALRM => Behavior::InfiniteLoop,
                     Signal::SIGFPE => Behavior::DivZero,
                     Signal::SIGABRT => Behavior::Abort,
-                    other => return Err(anyhow!("Program exited with unexpected signal '{}'", other))
+                    other => return Err(anyhow!("Program exited with unexpected signal '{}'", other)).context(output)
                 }
-                status => return Err(anyhow!("Program unexpectedly failed: {:?}", status))
+                status => return Err(anyhow!("Program unexpectedly failed: {:?}", status)).context(output)
             };
 
             Ok((output, behavior))

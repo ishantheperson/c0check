@@ -2,6 +2,7 @@ use std::env;
 use std::sync::{Mutex, atomic::{self, AtomicUsize}};
 use std::time::Instant;
 use std::path::Path;
+use std::fs;
 use std::process;
 use rayon::prelude::*;
 use anyhow::{Result, Error};
@@ -97,7 +98,11 @@ fn main() -> Result<()> {
         }
     };
 
-    let tests = discover_tests::discover(Path::new(test_path))?;
+    let test_dir = {
+        let pathbuf = Path::new(test_path);
+        fs::canonicalize(pathbuf)?
+    };
+    let tests = discover_tests::discover(&test_dir)?;
 
     eprintln!("Discovered {} tests", tests.len());
 
