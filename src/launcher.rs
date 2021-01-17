@@ -9,42 +9,14 @@ use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use lazy_static::lazy_static;
-use nix::unistd::{self, ForkResult, Pid};
+use nix::unistd::{self, ForkResult};
 use nix::sys::wait::{self, WaitStatus};
-use nix::sys::signal::{self, Signal, SigAction, SigHandler, SigSet, SaFlags};
-use nix::libc::{self, c_int, STDOUT_FILENO, STDERR_FILENO};
+use nix::sys::signal::Signal;
+use nix::libc::{self, STDOUT_FILENO, STDERR_FILENO};
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
 use crate::executer::*;
-
-extern "C" {
-    /// Setting the interval timer.
-    /// For some reason this is not in libc.
-    /// See https://github.com/rust-lang/libc/issues/1347
-    fn setitimer(which: c_int, new_value: *const libc::itimerval, old_value: *mut libc::itimerval) -> c_int;
-}
-
-fn set_virtual_timer(timeout: i64) {
-    let timer = libc::itimerval {
-        it_interval: libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0
-        },
-        it_value: libc::timeval {
-            tv_sec: timeout,
-            tv_usec: 0
-        }
-    };
-
-    unsafe {
-        if setitimer(libc::ITIMER_VIRTUAL, &timer, std::ptr::null_mut()) < 0 {
-            let msg = CString::new("setitimer").unwrap();
-            libc::perror(msg.as_ptr());
-            panic!()
-        }
-    }    
-}
 
 pub struct CC0Executer();
 
@@ -206,7 +178,7 @@ lazy_static! {
 }
 
 /// Timeout for compilation
-const COMPILATION_TIMEOUT: u32 = 30;
+const COMPILATION_TIMEOUT: u32 = 10;
 /// Timeout for running tests with the GCC backend
 const CC0_TEST_TIMEOUT: i32 = 10;
 /// Timeout for running tests in C0VM.
@@ -215,6 +187,9 @@ const CC0_TEST_TIMEOUT: i32 = 10;
 const C0VM_TEST_TIMEOUT: i32 = 20;
 /// Similar to C0VM, truly intensive tests should not be run in coin
 const COIN_TEST_TIMEOUT: i32 = 20;
+
+const COMPILATION_MAX_MEM: u64 = 4 * 1024 * 1024 * 1024;
+const TEST_MAX_MEM: u64 = 4 * 1024 * 1024 * 1024;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
 const EXEC_FAILURE_CODE: i32 = 100;
@@ -232,55 +207,10 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
         ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
+            set_resource_limits(COMPILATION_MAX_MEM, COMPILATION_TIMEOUT as u64);
 
-            /// The signal handler needs to access this, and it needs
-            /// to be updated after the fork()
-            static mut child_pid: Option<Pid> = None;
-
-            let child = match unsafe { unistd::fork().expect("when really spawning cc0") } {
-                ForkResult::Child => {
-                    // Set new process group
-                    unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
-                    let _ = unistd::execvp(CC0_PATH.as_ref(), &argv);
-                    process::exit(EXEC_FAILURE_CODE);
-                },
-                
-                ForkResult::Parent { child } => {
-                    child
-                }
-            };            
-
-            unsafe { child_pid = Some(child) };
-
-            extern "C" fn alarm_handler(_signal: i32) {
-                unsafe {
-                    // It's possible the child process exits between
-                    // the alarm going off and this line being reached, so then
-                    // we would be sending kill to a nonexistent process
-                    let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
-                    let default_action = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
-                    signal::sigaction(Signal::SIGALRM, &default_action).unwrap();
-                    signal::raise(Signal::SIGALRM).unwrap();
-                }
-            }
-            
-            let alarm_action = SigAction::new(
-                SigHandler::Handler(alarm_handler), 
-                SaFlags::empty(), 
-                SigSet::all());
-
-            unsafe { signal::sigaction(Signal::SIGALRM, &alarm_action).unwrap() };
-            unistd::alarm::set(COMPILATION_TIMEOUT);
-
-            let status = wait::waitpid(child, None).expect("Failed to wait for real compiler process");
-            match status {
-                WaitStatus::Exited(_, i) => process::exit(i),
-                WaitStatus::Signaled(_, signal, _) => {
-                    signal::raise(signal).unwrap();
-                    unreachable!("Signal should kill process")
-                },
-                other => panic!("Really unexpected exit status: {:?}", other)
-            }
+            let _ = unistd::execvp(CC0_PATH.as_ref(), &argv);
+            unsafe { libc::_exit(EXEC_FAILURE_CODE); }
         },
 
         ForkResult::Parent { child } => {
@@ -295,7 +225,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                 },
                 WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")).context(output),
                 WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")).context(output),
-                WaitStatus::Signaled(_, Signal::SIGALRM, _) => Err(anyhow!("CC0 timed out")).context(output),
+                WaitStatus::Signaled(_, Signal::SIGKILL, _) => Err(anyhow!("CC0 timed out")).context(output),
                 status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)).context(output)
             }
         }
@@ -322,15 +252,17 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
 
     match unsafe { unistd::fork().context("when spawning test process")? } {
         ForkResult::Child => {
-            env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
-            redirect_io(write_pipe);
             unistd::close(read_pipe).unwrap();
+            redirect_io(write_pipe);
+
+            set_resource_limits(TEST_MAX_MEM, timeout as u64);
+            env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
 
             // Use a 'virtual timer' here, which only measures time actually spent
             // running our program in user mode. This means that if the OS
             // runs another program, the time spent doing that will not 
             // count against the timeout for the test
-            set_virtual_timer(timeout as i64);
+            // set_virtual_timer(timeout as i64);
 
             let _err = unistd::execve(executable.as_ref(), &argv, &[&result_env]).unwrap_err();
             // Couldn't exec
@@ -374,7 +306,10 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
                     Signal::SIGSEGV => Behavior::Segfault,
-                    Signal::SIGALRM | Signal::SIGVTALRM => Behavior::InfiniteLoop,
+                    // Some Linux versions send SIGKILL when the 
+                    // time rlimit is exceeded
+                    | Signal::SIGXCPU
+                    | Signal::SIGKILL => Behavior::InfiniteLoop,
                     Signal::SIGFPE => Behavior::DivZero,
                     Signal::SIGABRT => Behavior::Abort,
                     other => return Err(anyhow!("Program exited with unexpected signal '{}'", other)).context(output)
@@ -413,6 +348,25 @@ fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
     unistd::close(read_pipe).unwrap();
     let output = String::from_utf8_lossy(&bytes).to_string();
     Ok(output)
+}
+
+fn set_resource_limits(memory: u64, time: u64) {
+    let mem_limit = libc::rlimit {
+        rlim_cur: memory,
+        rlim_max: memory
+    };
+
+    let time_limit = libc::rlimit {
+        rlim_cur: time,
+        rlim_max: time
+    };
+
+    unsafe {
+        assert!(libc::setrlimit(libc::RLIMIT_AS, &mem_limit) >= 0);
+        assert!(libc::setrlimit(libc::RLIMIT_CPU, &time_limit) >= 0);
+    }
+
+    println!("Set resource limits");
 }
 
 #[cfg(test)]
