@@ -4,6 +4,7 @@ use anyhow::Result;
 use crate::executer::*;
 use crate::spec::*;
 
+/// Runs the given test case using the given execution strategy
 pub fn run_test(executer: &dyn Executer, test: &TestInfo) -> Result<TestResult> {
     let properties = executer.properties();
     
@@ -26,6 +27,8 @@ pub fn run_test(executer: &dyn Executer, test: &TestInfo) -> Result<TestResult> 
     Ok(TestResult::Success)    
 }
 
+/// Test cases either succeed or have a mismatch between the expected
+/// behavior and the actual behavior
 pub enum TestResult {
     Success,
     Mismatch(Failure)
@@ -46,6 +49,10 @@ impl Failure {
     }    
 }
 
+/// Finds the behavior a given spec prescribes. This basically just involves
+/// checking if the execution strategy has the properties that the spec
+/// needs (e.g. a garbage collected executor can run tests which require 
+/// garbage collection)
 fn find_behavior(spec: &Spec, properties: &ExecuterProperties) -> Option<Behavior> {
     match spec {
         Spec::Behavior(b) => Some(*b),

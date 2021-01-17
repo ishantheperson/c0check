@@ -220,6 +220,7 @@ impl<'a> SpecParser<'a> {
         }
     }
 
+    /// Creates an unexpected token error
     fn unexpected_token(&mut self, range: Span, msg: &'static str) -> SpecParseError {
         SpecParseError::UnexpectedToken { 
             actual: String::from(&self.input[range.clone()]), 
@@ -343,6 +344,7 @@ impl SpecToken {
     }
 }
 
+/// Does the dirty work of lexing 'return *' and 'return <n>' as one token
 fn lex_return(lexer: &mut Lexer<SpecToken>) -> Option<Option<i32>> {
     match lexer.next() {
         Some(SpecToken::Number(x)) => Some(Some(x)),

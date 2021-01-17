@@ -31,9 +31,7 @@ fn run_tests<'a>(executer: &dyn Executer, tests: &'a [TestInfo]) -> TestResults<
     let errors: Mutex<Vec<(&TestInfo, Error)>> = Mutex::new(Vec::new());
 
     let count = AtomicUsize::new(1);
-
     let start = Instant::now();
-
     let len_width = tests.len().to_string().len();
 
     tests.par_iter().for_each(|test| {

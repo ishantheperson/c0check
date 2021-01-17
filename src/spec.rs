@@ -2,27 +2,37 @@ use std::fmt::{self, Formatter, Display};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Holds metadata about a test, as well as the parsed spec
 #[derive(Debug)]
 pub struct TestInfo {
     pub execution: TestExecutionInfo,
     pub specs: Specs
 }
 
+/// Test metadata
 #[derive(Debug)]
 pub struct TestExecutionInfo {
+    /// Absolute paths to C0/C1 source files
     pub sources: Vec<String>,
+    /// Any prescribed compiler options
     pub compiler_options: Vec<String>,
+    /// The directory the test came from. Necessary since some
+    /// test cases (e.g. <img> library tests) load resources
     pub directory: Arc<str>
 }
 
+/// Specs are of the form 'predicate => spec' or just a '<behavior>'
 #[derive(Debug)]
 pub enum Spec {
     Implication(ImplementationPredicate, Box<Spec>),
     Behavior(Behavior)
 }
 
+/// Test cases can have multiple specs i.e. if tests have one outcome in cc0
+/// but another in coin
 pub type Specs = Vec<Spec>;
 
+/// Describes an implementation
 #[derive(Debug)]
 pub enum ImplementationPredicate {
     Library,
@@ -37,6 +47,10 @@ pub enum ImplementationPredicate {
     Or(Box<ImplementationPredicate>, Box<ImplementationPredicate>)
 }
 
+/// An expected test behavior/test outcome.
+/// Note that 'skipped' might be generated if the 
+/// test was not actually run for some reason
+/// (e.g. C1 tests in coin)
 #[derive(Debug, Clone, Copy)]
 pub enum Behavior {
     CompileError,
@@ -81,7 +95,6 @@ impl Eq for Behavior { }
 
 impl Display for TestInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-
         let sources: Vec<_> = self.execution.sources.iter().map(|source| {
             let mut path = Path::new(source);
             if let Some(prefix) = path.ancestors().nth(2) {

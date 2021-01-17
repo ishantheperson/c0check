@@ -7,6 +7,10 @@ use anyhow::{anyhow, Context, Result};
 use crate::parse_spec::{self, ParseOptions};
 use crate::spec::*;
 
+/// Discovers all CC0 test cases in all subdirectories of 'base'.
+/// This assumes base contains directories which contain test cases.
+/// If a subdirectory contains 'sources.test', then that file will be
+/// read to discover test cases.
 pub fn discover(base: &Path) -> Result<Vec<TestInfo>> {
     let paths = fs::read_dir(base)
         .context(format!("Couldn't open the root test directory '{}'", base.display()))?
@@ -27,17 +31,19 @@ pub fn discover(base: &Path) -> Result<Vec<TestInfo>> {
     Ok(tests)
 }
 
+/// Loads all test cases inside a directory
 fn discover_directory(dir: &Path) -> Result<Vec<TestInfo>> {
     let sources_test_path = dir.join("sources.test");
 
     // Try to look for sources.test
     match File::open(sources_test_path).ok() {
-        Some(sources_test) => read_source_test(dir, sources_test),
+        Some(sources_test) => read_sources_file(dir, sources_test),
         None => read_test_files(dir)
     }
 }
 
-fn read_source_test(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
+/// Parses a 'sources.test' 
+fn read_sources_file(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
     let reader = BufReader::new(sources_test);
     let lines = reader.lines();
     let mut tests = Vec::new();
@@ -89,6 +95,7 @@ fn read_source_test(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
     Ok(tests)
 }
 
+/// Loads all .c0, .c1 test files in the given directory
 fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
     let test_paths = fs::read_dir(dir)
         .context(format!("Couldn't open a test directory '{}'", dir.display()))?
@@ -100,6 +107,7 @@ fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
     for test in test_paths {
         let path = test.path();
 
+        // Check if its a c0 or c1 file and open it if it is
         match path.extension().map(|ext| ext.to_str().expect("Invalid path character")) {
             Some("c0") | Some("c1") => (),
             _ => continue
@@ -110,6 +118,7 @@ fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
             Err(_) => continue
         };
 
+        // Read spec line
         let reader = BufReader::new(file);
         let spec_line = match reader.lines().next() {
             Some(Ok(line)) => line,

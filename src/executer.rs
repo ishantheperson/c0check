@@ -11,6 +11,7 @@ pub struct ExecuterProperties {
 }
 
 impl ExecuterProperties {
+    /// Checks if the given predicate is true for this executer
     pub fn matches_predicate(&self, predicate: &ImplementationPredicate) -> bool {
         use ImplementationPredicate::*;
         match predicate {
