@@ -34,26 +34,30 @@ fn run_tests<'a>(executer: &dyn Executer, tests: &'a [TestInfo]) -> TestResults<
 
     let start = Instant::now();
 
+    let len_width = tests.len().to_string().len();
+
     tests.par_iter().for_each(|test| {
         let status = checker::run_test(executer, test);
         // Clear 'race condition' but 🤷‍♀️
         let i = count.fetch_add(1, atomic::Ordering::Relaxed);
+        let progress = format!("{:width$}/{:width$}", i, tests.len(), width = len_width);
+
         match status {
             Ok(TestResult::Success) => {
-                eprintln!("{:4}/{:4} ✅ {}", i, tests.len(), test);
+                eprintln!("{} ✅ {}", progress, test);
             },
             Ok(TestResult::Mismatch(failure)) => {
                 if failure.is_timeout() {
-                    eprintln!("{:4}/{:4} ⌛ {}", i, tests.len(), test);
+                    eprintln!("{} ⌛ {}", progress, test);
                     timeouts.lock().unwrap().push(test);
                 }
                 else {
-                    eprintln!("{:4}/{:4} ❌ {}: {}", i, tests.len(), test, failure);
+                    eprintln!("{} ❌ {}: {}", progress, test, failure);
                     failures.lock().unwrap().push((test, failure));
                 }
             },
             Err(error) => {
-                eprintln!("{:4}/{:4} ⛔ {}: {:#}\n", i, tests.len(), test, error);
+                eprintln!("{} ⛔ {}: {:#}\n", progress, test, error);
                 errors.lock().unwrap().push((test, error));
             }
         }

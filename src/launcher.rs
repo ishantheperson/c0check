@@ -189,7 +189,7 @@ const C0VM_TEST_TIMEOUT: i32 = 20;
 const COIN_TEST_TIMEOUT: i32 = 20;
 
 const COMPILATION_MAX_MEM: u64 = 4 * 1024 * 1024 * 1024;
-const TEST_MAX_MEM: u64 = 4 * 1024 * 1024 * 1024;
+const TEST_MAX_MEM: u64 = 1 * 1024 * 1024 * 1024;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
 const EXEC_FAILURE_CODE: i32 = 100;
@@ -220,9 +220,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
             match status {
                 WaitStatus::Exited(_, 0) => Ok(Ok(())),
                 WaitStatus::Exited(_, 1) => Ok(Err(output)),
-                WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => {
-                    Err(anyhow!("CC0 failed to invoke GCC"))
-                },
+                WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => Err(anyhow!("CC0 failed to invoke GCC")).context(output),
                 WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")).context(output),
                 WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")).context(output),
                 WaitStatus::Signaled(_, Signal::SIGKILL, _) => Err(anyhow!("CC0 timed out")).context(output),
@@ -365,8 +363,6 @@ fn set_resource_limits(memory: u64, time: u64) {
         assert!(libc::setrlimit(libc::RLIMIT_AS, &mem_limit) >= 0);
         assert!(libc::setrlimit(libc::RLIMIT_CPU, &time_limit) >= 0);
     }
-
-    println!("Set resource limits");
 }
 
 #[cfg(test)]
