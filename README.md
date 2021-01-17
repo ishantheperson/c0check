@@ -79,6 +79,7 @@ file, then there is the following race condition:
 | Generates `haz.c0.c`      |                    |
 |                         | Generates `haz.c0.c` |
 | Invokes `gcc` on `haz.c0.c` |               |
-| Deletes `haz.c0.c`        | Invokes `gcc` on `haz.c0.c` |
+| Deletes `haz.c0.c`        |                 |
+|                           | Invokes `gcc` on `haz.c0.c` |
 |                         | Error: `haz.c0.c` doesn't exist |
 | Error: executable produces wrong result | |
