@@ -1,9 +1,20 @@
 # c0check - CC0 Testing Harness
 
-This is a re-implementation of cc0-check in Rust. The key enhancement
-is that the test cases are run in parallel, and output from failed tests
+This is a re-implementation of cc0-check in Rust. 
+
+The key enhancement is that the test cases are run in parallel, and output from failed tests
 is saved. On my i7-8700k, this runs several times faster than the 
-SML-based `*-check` (~1 minute vs ~10 for CC0, ~6 minutes vs ~20 for C0VM).
+SML-based `*-check` (~1 minute vs ~10 for CC0, ~6 minutes vs ~20 for C0VM)
+
+Other enhancements include better timeouts which measure user time spent
+in the test process as opposed to wall clock time. This means that if the
+system context-switches out the test programs for a long time, they will
+not incorrectly time out. This is useful on Andrew servers
+
+There is also a bound placed on the memory usage of the test program.
+This prevents coin/c0vm testing from eating all available memory in
+some infinite loop tests since they don't have a garbage collector and
+making the system unusable for other purposes.  
 
 ## Requirements
 
