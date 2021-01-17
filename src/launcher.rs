@@ -188,7 +188,10 @@ const C0VM_TEST_TIMEOUT: i32 = 20;
 /// Similar to C0VM, truly intensive tests should not be run in coin
 const COIN_TEST_TIMEOUT: i32 = 20;
 
+/// GCC never seems to use too much memory, but we set a limit anyway
 const COMPILATION_MAX_MEM: u64 = 4 * 1024 * 1024 * 1024;
+/// Since coin/c0vm don't have a garbage collector, 
+/// some tests can eat up a lot of memory
 const TEST_MAX_MEM: u64 = 1 * 1024 * 1024 * 1024;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
@@ -223,7 +226,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                 WaitStatus::Exited(_, CC0_GCC_FAILURE_CODE) => Err(anyhow!("CC0 failed to invoke GCC")).context(output),
                 WaitStatus::Exited(_, EXEC_FAILURE_CODE) => Err(anyhow!("Failed to exec cc0")).context(output),
                 WaitStatus::Exited(_, RUST_PANIC_CODE) => Err(anyhow!("CC0 process panic'd")).context(output),
-                WaitStatus::Signaled(_, Signal::SIGKILL, _) => Err(anyhow!("CC0 timed out")).context(output),
+                WaitStatus::Signaled(_, Signal::SIGXCPU, _) => Err(anyhow!("CC0 timed out")).context(output),
                 status => Err(anyhow!("CC0 unexpectedly failed: {:?}", status)).context(output)
             }
         }
@@ -304,10 +307,7 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
                     Signal::SIGSEGV => Behavior::Segfault,
-                    // Some Linux versions send SIGKILL when the 
-                    // time rlimit is exceeded
-                    | Signal::SIGXCPU
-                    | Signal::SIGKILL => Behavior::InfiniteLoop,
+                    Signal::SIGXCPU => Behavior::InfiniteLoop,
                     Signal::SIGFPE => Behavior::DivZero,
                     Signal::SIGABRT => Behavior::Abort,
                     other => return Err(anyhow!("Program exited with unexpected signal '{}'", other)).context(output)
@@ -356,7 +356,14 @@ fn set_resource_limits(memory: u64, time: u64) {
 
     let time_limit = libc::rlimit {
         rlim_cur: time,
-        rlim_max: time
+        // If rlim_max == rlim_cur, then
+        // the process gets SIGKILL.
+        // Note that the Boehm GC used by C0RT 
+        // sometimes uses SIGXCPU for its own purposes
+        // if not configured with --disable-threads. 
+        // However this might cause issues if we want to
+        // do --enable-parallel-mark
+        rlim_max: time + 5
     };
 
     unsafe {
