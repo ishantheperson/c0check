@@ -342,7 +342,7 @@ fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
             break;
         }
 
-        bytes.extend(buf[..num_bytes].into_iter());
+        bytes.extend(buf[..num_bytes].iter());
     }
 
     unistd::close(read_pipe).unwrap();

@@ -25,7 +25,7 @@ struct TestResults<'a> {
     errors: Vec<(&'a TestInfo, Error)>
 }
 
-fn run_tests<'a>(executer: Box<dyn Executer>, tests: &'a Vec<TestInfo>) -> TestResults<'a> {
+fn run_tests<'a>(executer: &dyn Executer, tests: &'a [TestInfo]) -> TestResults<'a> {
     let failures: Mutex<Vec<(&TestInfo, Failure)>> = Mutex::new(Vec::new());
     let timeouts: Mutex<Vec<&TestInfo>> = Mutex::new(Vec::new());
     let errors: Mutex<Vec<(&TestInfo, Error)>> = Mutex::new(Vec::new());
@@ -35,7 +35,7 @@ fn run_tests<'a>(executer: Box<dyn Executer>, tests: &'a Vec<TestInfo>) -> TestR
     let start = Instant::now();
 
     tests.par_iter().for_each(|test| {
-        let status = checker::run_test(&executer, test);
+        let status = checker::run_test(executer, test);
         // Clear 'race condition' but 🤷‍♀️
         let i = count.fetch_add(1, atomic::Ordering::Relaxed);
         match status {
@@ -69,8 +69,8 @@ fn run_tests<'a>(executer: Box<dyn Executer>, tests: &'a Vec<TestInfo>) -> TestR
     }
 }
 
-fn parse_executer(name: &String) -> Box<dyn Executer> {
-    match name.as_str() {
+fn parse_executer(name: &str) -> Box<dyn Executer> {
+    match name {
         "cc0" => Box::new(CC0Executer()),
         "c0vm" => Box::new(C0VMExecuter()),
         "coin" => Box::new(CoinExecuter()),
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
 
     eprintln!("Discovered {} tests", tests.len());
 
-    let TestResults { failures, timeouts, errors } = run_tests(executer, &tests);
+    let TestResults { failures, timeouts, errors } = run_tests(executer.as_ref(), &tests);
     let successes = tests.len() - failures.len() - errors.len();
 
     println!("\nTimeouts:\n");

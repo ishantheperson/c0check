@@ -224,7 +224,7 @@ impl<'a> SpecParser<'a> {
         SpecParseError::UnexpectedToken { 
             actual: String::from(&self.input[range.clone()]), 
             range,
-            msg: msg 
+            msg 
         }        
     }
 }

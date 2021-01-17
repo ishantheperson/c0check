@@ -4,7 +4,7 @@ use anyhow::Result;
 use crate::executer::*;
 use crate::spec::*;
 
-pub fn run_test(executer: &Box<dyn Executer>, test: &TestInfo) -> Result<TestResult> {
+pub fn run_test(executer: &dyn Executer, test: &TestInfo) -> Result<TestResult> {
     let properties = executer.properties();
     
     // See if any behaviors apply
