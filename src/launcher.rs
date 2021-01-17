@@ -395,7 +395,7 @@ mod compile_tests {
             specs: vec![]
         };
 
-        let args= [CString::new("test_resources/test.c0").unwrap()];
+        let args = [CString::new("test_resources/test.c0").unwrap()];
         compile(&args)?.map_err(|e| anyhow!(e))?;
         assert_eq!(execute(&test.execution, &CString::new("a.out").unwrap(), 5)?.1, Behavior::Return(Some(0)));
 

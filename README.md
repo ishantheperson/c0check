@@ -57,6 +57,17 @@ The program will generate `a.out123` and `c0_result123` files during execution.
 If you halt the program with CTRL-C in the middle of testing, then these files
 might stick around. You would have to delete them manually.
 
-It seems that CC0 (incorrectly and nondeterministically) fails to compile 
-some tests unexpectedly, when the compiler is run in parallel. Haven't seen
-this happen recently so it might be fixed.
+There is a race condition when running CC0 in parallel: when compiling
+a sequence of files (e.g. foo.c0 bar.c0 haz.c0), CC0 generates a temporary file
+with the name taken from the last file in the sequence (e.g. haz.c0.c).
+Unfortunately if multiple tests in a folder contain the same file as the last 
+file, then there is the following race condition:
+
+| CC0 #1                  | CC0 #2 |
+| ----------------------- | --------------- |
+| Generates haz.c0.c      |                    |
+|                         | Generates haz.c0.c |
+| Invokes gcc on haz.c0.c |               |
+| Deletes haz.c0.c        | Invokes gcc on haz.c0.c |
+|                         | Error: haz.c0.c doesn't exist |
+| Error: executable produces wrong result | |
