@@ -26,6 +26,7 @@ impl Executer for CC0Executer {
         args.extend(test.compiler_options.iter().map(string_to_cstring));
         args.extend(test.sources.iter().map(string_to_cstring));
         
+        // Global counter to come up with unique names for output files
         static mut test_counter: AtomicUsize = AtomicUsize::new(0);
 
         let out_file: CString = unsafe {
@@ -37,16 +38,16 @@ impl Executer for CC0Executer {
         args.push(out_file.clone());
 
         let compilation_result = compile(&args)?;
-        match compilation_result {
-            Ok(()) => {
-                let exec_result = execute(test, &out_file, CC0_TEST_TIMEOUT);
-                if let Err(e) = fs::remove_file(Path::new(&out_file.to_str().unwrap())) {
-                    eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
-                }
-                exec_result
-            },
-            Err(output) => Ok((output, Behavior::CompileError))
+        if let Err(output) = compilation_result {
+            return Ok((output, Behavior::CompileError))
         }
+        
+        let exec_result = execute(test, &out_file, CC0_TEST_TIMEOUT);
+        if let Err(e) = fs::remove_file(Path::new(&out_file.to_str().unwrap())) {
+            eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
+        }
+
+        exec_result
     }
 
     fn properties(&self) -> ExecuterProperties {
@@ -64,12 +65,13 @@ pub struct C0VMExecuter();
 
 impl Executer for C0VMExecuter {
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
+        // Compile test case
         let mut args: Vec<CString> = Vec::new();
         args.extend(test.compiler_options.iter().map(string_to_cstring));
         args.extend(test.sources.iter().map(string_to_cstring));
         
         static mut test_counter: AtomicUsize = AtomicUsize::new(0);
-
+        
         let out_file: CString = unsafe {
             let current_dir = env::current_dir().unwrap();
             let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
@@ -79,22 +81,23 @@ impl Executer for C0VMExecuter {
         args.push(out_file.clone());
 
         let compilation_result = compile(&args)?;
-        match compilation_result {
-            Ok(()) => {
-                let exec_result = 
-                    execute_with_args(
-                        test, 
-                        C0VM_PATH.as_ref(), 
-                        &[out_file.as_ref()], 
-                        C0VM_TEST_TIMEOUT);
-                
-                if let Err(e) = fs::remove_file(out_file.to_str().unwrap()) {
-                    eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
-                }
-                exec_result
-            }
-            Err(output) => Ok((output, Behavior::CompileError))
+        if let Err(output) = compilation_result {
+            return Ok((output, Behavior::CompileError))
         }
+
+        // Run test case
+        let exec_result = 
+            execute_with_args(
+                test, 
+                C0VM_PATH.as_ref(), 
+                &[out_file.as_ref()], 
+                C0VM_TEST_TIMEOUT);
+        
+        if let Err(e) = fs::remove_file(out_file.to_str().unwrap()) {
+            eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
+        }
+
+        exec_result
     }
 
     fn properties(&self) -> ExecuterProperties {
@@ -113,10 +116,8 @@ pub struct CoinExecuter();
 impl Executer for CoinExecuter {
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
         // Check if it uses C1, if so then skip the test
-        for source in test.sources.iter() {
-            if source.ends_with(".c1") {
-                return Ok(("<C1 test skipped>".to_string(), Behavior::Skipped))
-            }
+        if test.sources.iter().any(|source| source.ends_with(".c1")) {
+            return Ok(("<C1 test skipped>".to_string(), Behavior::Skipped))
         }
 
         // No need to compile tests for the C0in-trepter
@@ -139,6 +140,7 @@ impl Executer for CoinExecuter {
 }
 
 lazy_static! {
+    /// Absolute path to CC0 repository
     static ref C0_HOME: Option<String> = {
         env::var("C0_HOME").ok().map(|path| {
             let pathbuf = PathBuf::from(&path);
@@ -255,17 +257,10 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
         ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
-
             set_resource_limits(TEST_MAX_MEM, timeout as u64);
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
 
-            // Use a 'virtual timer' here, which only measures time actually spent
-            // running our program in user mode. This means that if the OS
-            // runs another program, the time spent doing that will not 
-            // count against the timeout for the test
-            // set_virtual_timer(timeout as i64);
-
-            let _err = unistd::execve(executable.as_ref(), &argv, &[&result_env]).unwrap_err();
+            let _ = unistd::execve(executable.as_ref(), &argv, &[&result_env]).unwrap_err();
             // Couldn't exec
             process::exit(EXEC_FAILURE_CODE);
         },
@@ -273,6 +268,10 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
         ForkResult::Parent { child } => {
             let output = read_from_pipe(read_pipe, write_pipe)?;
             let status = wait::waitpid(child, None).expect("Failed to wait() for test program");
+
+            // Read C0_RESULT_FILE, which consists of a null byte
+            // followed by an i32 exit status, which is the 
+            // return value from C0's main()
             let result = match fs::read(&result_file) {
                 Ok(result) => {
                     fs::remove_file(Path::new(&result_file))
@@ -320,23 +319,25 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
     }
 }
 
+/// Redirects stdout and stderr to the given file descriptor
 fn redirect_io(target_file: RawFd) {
     unistd::dup2(target_file, STDOUT_FILENO).expect("Couldn't redirect stdout");
     unistd::dup2(target_file, STDERR_FILENO).expect("Couldn't redirect stderr");
 }
 
+/// Reads output from the given pipe set
 fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
-    const PIPE_CAPACITY: usize = 65536;
-    
     // Capture CC0 output
     unistd::close(write_pipe).unwrap();
-
+    
+    const PIPE_CAPACITY: usize = 65536;
     let mut bytes: Vec<u8> = Vec::with_capacity(PIPE_CAPACITY);
 
     loop {
         let mut buf: [u8; PIPE_CAPACITY] = unsafe { MaybeUninit::uninit().assume_init() };
         let num_bytes = unistd::read(read_pipe, &mut buf).context("When reading CC0 output")?;
         if num_bytes == 0 {
+            // read() returns 0 on EOF
             break;
         }
 
@@ -353,6 +354,11 @@ fn set_resource_limits(memory: u64, time: u64) {
         rlim_cur: memory,
         rlim_max: memory
     };
+
+    // Use a 'virtual timer' here, which only measures time actually spent
+    // running our program in user mode. This means that if the OS
+    // runs another program, the time spent doing that will not 
+    // count against the timeout for the test
 
     let time_limit = libc::rlimit {
         rlim_cur: time,

@@ -30,6 +30,10 @@ impl ExecuterProperties {
 }
 
 pub trait Executer: Send + Sync {
+    /// How to run a test. 
+    /// Returns (Test output, Test actual behavior)
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)>;
+
+    /// Gets the properties of this executer
     fn properties(&self) -> ExecuterProperties;
 }

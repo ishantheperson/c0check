@@ -90,6 +90,7 @@ fn print_usage(msg: &str) -> ! {
 }
 
 fn main() -> Result<()> {
+    // Parse command line options
     let args: Vec<_> = env::args().collect();
 
     let (executer, test_path) = match args.as_slice() {
@@ -100,6 +101,7 @@ fn main() -> Result<()> {
         }
     };
 
+    // Load test cases
     let test_dir = {
         let pathbuf = Path::new(test_path);
         fs::canonicalize(pathbuf)?
@@ -108,7 +110,10 @@ fn main() -> Result<()> {
 
     eprintln!("Discovered {} tests", tests.len());
 
+    // Run test cases
     let TestResults { failures, timeouts, errors } = run_tests(executer.as_ref(), &tests);
+    
+    // Report results
     let successes = tests.len() - failures.len() - errors.len();
 
     println!("\nTimeouts:\n");
