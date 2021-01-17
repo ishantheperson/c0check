@@ -8,12 +8,9 @@ pub fn run_test(executer: &Box<dyn Executer>, test: &TestInfo) -> Result<TestRes
     let properties = executer.properties();
     
     // See if any behaviors apply
-    let mut behaviors: Vec<&Behavior> = Vec::new();
-    for spec in test.specs.iter() {
-        if let Some(behavior) = find_behavior(spec, &properties) {
-            behaviors.push(behavior)
-        }
-    }
+    let behaviors: Vec<Behavior> = test.specs.iter()
+        .filter_map(|spec| find_behavior(spec, &properties))
+        .collect();
     
     if behaviors.is_empty() {
         return Ok(TestResult::Success)
@@ -21,8 +18,8 @@ pub fn run_test(executer: &Box<dyn Executer>, test: &TestInfo) -> Result<TestRes
     
     let (output, result) = executer.run_test(&test.execution)?;
     for &behavior in behaviors.iter() {
-        if behavior != &result {
-            return Ok(TestResult::Mismatch(Failure { expected: *behavior, actual: result, output }))
+        if behavior != result {
+            return Ok(TestResult::Mismatch(Failure { expected: behavior, actual: result, output }))
         }
     }
 
@@ -49,27 +46,11 @@ impl Failure {
     }    
 }
 
-fn matches_predicate(predicate: &ImplementationPredicate, properties: &ExecuterProperties) -> bool {
-    use ImplementationPredicate::*;
-    match predicate {
-        Library => properties.libraries,
-        Typechecked => properties.typechecked,
-        GarbageCollected => properties.garbage_collected,
-        Safe => properties.safe,
-        False => false,
-        ImplementationName(name ) => &properties.name == name,
-
-        Not(p) => !matches_predicate(p, properties),
-        And(p1, p2) => matches_predicate(p1, properties) && matches_predicate(p2, properties),
-        Or(p1, p2) => matches_predicate(p1, properties) || matches_predicate(p2, properties),
-    }
-}
-
-fn find_behavior<'a>(spec: &'a Spec, properties: &ExecuterProperties) -> Option<&'a Behavior> {
+fn find_behavior(spec: &Spec, properties: &ExecuterProperties) -> Option<Behavior> {
     match spec {
-        Spec::Behavior(b) => Some(b),
+        Spec::Behavior(b) => Some(*b),
         Spec::Implication(predicate, consequent) => {
-            if matches_predicate(predicate, properties) {
+            if properties.matches_predicate(predicate) {
                 find_behavior(consequent, properties)
             }
             else {

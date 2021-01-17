@@ -84,7 +84,7 @@ impl<'a> SpecParser<'a> {
 
         let (tok, _) = match self.lexer.peek() {
             Some(tok) => tok,
-            None => return Err(UnexpectedEOF { msg: "implementation or behavior"} )
+            None => return Err(UnexpectedEOF { msg: "implementation or behavior"})
         };
 
         if tok.is_behavior() {

@@ -12,11 +12,39 @@ use lazy_static::lazy_static;
 use nix::unistd::{self, ForkResult, Pid};
 use nix::sys::wait::{self, WaitStatus};
 use nix::sys::signal::{self, Signal, SigAction, SigHandler, SigSet, SaFlags};
-use nix::libc::{STDOUT_FILENO, STDERR_FILENO};
+use nix::libc::{self, c_int, STDOUT_FILENO, STDERR_FILENO};
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
 use crate::executer::*;
+
+extern "C" {
+    /// Setting the interval timer.
+    /// For some reason this is not in libc.
+    /// See https://github.com/rust-lang/libc/issues/1347
+    fn setitimer(which: c_int, new_value: *const libc::itimerval, old_value: *mut libc::itimerval) -> c_int;
+}
+
+fn set_virtual_timer(timeout: i64) {
+    let timer = libc::itimerval {
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0
+        },
+        it_value: libc::timeval {
+            tv_sec: timeout,
+            tv_usec: 0
+        }
+    };
+
+    unsafe {
+        if setitimer(libc::ITIMER_VIRTUAL, &timer, std::ptr::null_mut()) < 0 {
+            let msg = CString::new("setitimer").unwrap();
+            libc::perror(msg.as_ptr());
+            panic!()
+        }
+    }    
+}
 
 pub struct CC0Executer();
 
@@ -33,7 +61,7 @@ impl Executer for CC0Executer {
             let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
             str_to_cstring(&format!("{}/a.out{}", current_dir.display(), next_id))
         };
-        args.push(str_to_cstring("-o"));
+        args.push(str_to_cstring("-vo"));
         args.push(out_file.clone());
 
         let compilation_result = compile(&args)?;
@@ -75,7 +103,7 @@ impl Executer for C0VMExecuter {
             let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
             str_to_cstring(&format!("{}/a.out{}.bc0", current_dir.display(), next_id))
         };
-        args.push(str_to_cstring("-bo"));
+        args.push(str_to_cstring("-vbo"));
         args.push(out_file.clone());
 
         let compilation_result = compile(&args)?;
@@ -178,15 +206,15 @@ lazy_static! {
 }
 
 /// Timeout for compilation
-const COMPILATION_TIMEOUT: u32 = 15;
+const COMPILATION_TIMEOUT: u32 = 30;
 /// Timeout for running tests with the GCC backend
-const CC0_TEST_TIMEOUT: u32 = 10;
+const CC0_TEST_TIMEOUT: i32 = 10;
 /// Timeout for running tests in C0VM.
 /// C0VM is probably more than 2x as slow as GCC,
 /// but truly intensive tests should not be run in C0VM
-const C0VM_TEST_TIMEOUT: u32 = 20;
+const C0VM_TEST_TIMEOUT: i32 = 20;
 /// Similar to C0VM, truly intensive tests should not be run in coin
-const COIN_TEST_TIMEOUT: u32 = 20;
+const COIN_TEST_TIMEOUT: i32 = 20;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
 const EXEC_FAILURE_CODE: i32 = 100;
@@ -209,25 +237,6 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
             /// to be updated after the fork()
             static mut child_pid: Option<Pid> = None;
 
-            extern "C" fn alarm_handler(_signal: i32) {
-                unsafe {
-                    // It's possible the child process exits between
-                    // the alarm going off and this line being reached, so then
-                    // we would be sending kill to a nonexistent process
-                    let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
-                    let default_action = SigAction::new(SigHandler::SigDfl,SaFlags::empty(), SigSet::empty());
-                    signal::sigaction(Signal::SIGALRM, &default_action).unwrap();
-                    signal::raise(Signal::SIGALRM).unwrap();
-                }
-            }
-            
-            let alarm_action = SigAction::new(
-                SigHandler::Handler(alarm_handler), 
-                SaFlags::SA_RESTART, 
-                SigSet::all());
-            
-            unsafe { signal::sigaction(Signal::SIGALRM, &alarm_action).unwrap() };
-
             let child = match unsafe { unistd::fork().expect("when really spawning cc0") } {
                 ForkResult::Child => {
                     // Set new process group
@@ -235,21 +244,40 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
                     let _ = unistd::execvp(CC0_PATH.as_ref(), &argv);
                     process::exit(EXEC_FAILURE_CODE);
                 },
-
+                
                 ForkResult::Parent { child } => {
                     child
                 }
-            };
+            };            
 
             unsafe { child_pid = Some(child) };
 
+            extern "C" fn alarm_handler(_signal: i32) {
+                unsafe {
+                    // It's possible the child process exits between
+                    // the alarm going off and this line being reached, so then
+                    // we would be sending kill to a nonexistent process
+                    let _ = signal::killpg(child_pid.unwrap(), Signal::SIGTERM);
+                    let default_action = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
+                    signal::sigaction(Signal::SIGALRM, &default_action).unwrap();
+                    signal::raise(Signal::SIGALRM).unwrap();
+                }
+            }
+            
+            let alarm_action = SigAction::new(
+                SigHandler::Handler(alarm_handler), 
+                SaFlags::empty(), 
+                SigSet::all());
+
+            unsafe { signal::sigaction(Signal::SIGALRM, &alarm_action).unwrap() };
             unistd::alarm::set(COMPILATION_TIMEOUT);
+
             let status = wait::waitpid(child, None).expect("Failed to wait for real compiler process");
             match status {
                 WaitStatus::Exited(_, i) => process::exit(i),
                 WaitStatus::Signaled(_, signal, _) => {
                     signal::raise(signal).unwrap();
-                    unreachable!()
+                    unreachable!("Signal should kill process")
                 },
                 other => panic!("Really unexpected exit status: {:?}", other)
             }
@@ -274,7 +302,7 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
     }
 }
 
-fn execute<Executable: AsRef<CStr>>(info: &TestExecutionInfo, executable: Executable, timeout: u32) -> Result<(String, Behavior)> {
+fn execute<Executable: AsRef<CStr>>(info: &TestExecutionInfo, executable: Executable, timeout: i32) -> Result<(String, Behavior)> {
     execute_with_args::<Executable, &CStr>(info, executable, &[], timeout)
 }
 
@@ -282,7 +310,7 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
     info: &TestExecutionInfo, 
     executable: Executable, 
     args: &[Arg], 
-    timeout: u32) -> Result<(String, Behavior)> 
+    timeout: i32) -> Result<(String, Behavior)> 
 {
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
     let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
@@ -297,7 +325,12 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
             redirect_io(write_pipe);
             unistd::close(read_pipe).unwrap();
-            unistd::alarm::set(timeout);
+
+            // Use a 'virtual timer' here, which only measures time actually spent
+            // running our program in user mode. This means that if the OS
+            // runs another program, the time spent doing that will not 
+            // count against the timeout for the test
+            set_virtual_timer(timeout as i64);
 
             let _err = unistd::execve(executable.as_ref(), &argv, &[&result_env]).unwrap_err();
             // Couldn't exec
@@ -341,7 +374,7 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
                 
                 WaitStatus::Signaled(_, signal, _) => match signal {
                     Signal::SIGSEGV => Behavior::Segfault,
-                    Signal::SIGALRM => Behavior::InfiniteLoop,
+                    Signal::SIGALRM | Signal::SIGVTALRM => Behavior::InfiniteLoop,
                     Signal::SIGFPE => Behavior::DivZero,
                     Signal::SIGABRT => Behavior::Abort,
                     other => return Err(anyhow!("Program exited with unexpected signal '{}'", other)).context(output)
