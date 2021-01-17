@@ -334,6 +334,7 @@ fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
     let mut bytes: Vec<u8> = Vec::with_capacity(PIPE_CAPACITY);
 
     loop {
+        #[allow(clippy::clippy::uninit_assumed_init)]
         let mut buf: [u8; PIPE_CAPACITY] = unsafe { MaybeUninit::uninit().assume_init() };
         let num_bytes = unistd::read(read_pipe, &mut buf).context("When reading CC0 output")?;
         if num_bytes == 0 {
