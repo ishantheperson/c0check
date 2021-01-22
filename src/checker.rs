@@ -17,14 +17,12 @@ pub fn run_test(executer: &dyn Executer, test: &TestInfo) -> Result<TestResult> 
         return Ok(TestResult::Success)
     }
     
-    let (output, result) = executer.run_test(&test.execution)?;
-    for &behavior in behaviors.iter() {
-        if behavior != result {
-            return Ok(TestResult::Mismatch(Failure { expected: behavior, actual: result, output }))
-        }
-    }
+    let (output, actual) = executer.run_test(&test.execution)?;
 
-    Ok(TestResult::Success)    
+    match behaviors.iter().find(|&&behavior| behavior != actual) {
+        Some(&expected) => Ok(TestResult::Mismatch(Failure { expected, actual, output })),
+        None => Ok(TestResult::Success)
+    } 
 }
 
 /// Test cases either succeed or have a mismatch between the expected

@@ -1,11 +1,9 @@
-use std::env;
 use std::sync::{Mutex, atomic::{self, AtomicUsize}};
 use std::time::Instant;
-use std::path::Path;
 use std::fs;
-use std::process;
+use launcher::{C0VMExecuter, CC0Executer, CoinExecuter};
 use rayon::prelude::*;
-use anyhow::{Result, Error};
+use anyhow::{Result, Error, Context};
 
 mod spec;
 mod discover_tests;
@@ -13,11 +11,13 @@ mod parse_spec;
 mod launcher;
 mod checker;
 mod executer;
+mod options;
+mod implementations;
 
 use crate::spec::*;
 use crate::executer::Executer;
-use crate::launcher::{CC0Executer, C0VMExecuter, CoinExecuter};
 use crate::checker::{Failure, TestResult};
+use crate::options::*;
 
 struct TestResults<'a> {
     failures: Vec<(&'a TestInfo, Failure)>,
@@ -71,47 +71,22 @@ fn run_tests<'a>(executer: &dyn Executer, tests: &'a [TestInfo]) -> TestResults<
     }
 }
 
-fn parse_executer(name: &str) -> Box<dyn Executer> {
-    match name {
-        "cc0" => Box::new(CC0Executer()),
-        "c0vm" => Box::new(C0VMExecuter()),
-        "coin" => Box::new(CoinExecuter()),
-        _ => print_usage(&format!("Invalid executer '{}'", name))
-    }
-}
-
-fn print_usage(msg: &str) -> ! {
-    if !msg.is_empty() {
-        println!("{}", msg)
-    }
-
-    println!("usage: c0check [<cc0|c0vm|coin>=cc0] <path to test directory>");
-    process::exit(0)
-}
-
 fn main() -> Result<()> {
-    // Parse command line options
-    let args: Vec<_> = env::args().collect();
-
-    let (executer, test_path) = match args.as_slice() {
-        [_, path] => (Box::new(CC0Executer()) as Box<dyn Executer>, path),
-        [_, executer_name, path] => (parse_executer(executer_name), path),
-        _ => {
-            print_usage("");
-        }
+    let Options { executer, test_dir, .. } = Options::from_args();
+    let executer: &dyn Executer = match executer {
+        ExecuterKind::CC0 => &CC0Executer(),
+        ExecuterKind::C0VM => &C0VMExecuter(),
+        ExecuterKind::Coin => &CoinExecuter()
     };
 
     // Load test cases
-    let test_dir = {
-        let pathbuf = Path::new(test_path);
-        fs::canonicalize(pathbuf)?
-    };
+    let test_dir = fs::canonicalize(test_dir).context("Couldn't resolve the test directory")?;
     let tests = discover_tests::discover(&test_dir)?;
 
     eprintln!("Discovered {} tests", tests.len());
 
     // Run test cases
-    let TestResults { failures, timeouts, errors } = run_tests(executer.as_ref(), &tests);
+    let TestResults { failures, timeouts, errors } = run_tests(executer, &tests);
     
     // Report results
     let successes = tests.len() - failures.len() - errors.len();

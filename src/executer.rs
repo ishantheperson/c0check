@@ -7,7 +7,7 @@ pub struct ExecuterProperties {
     pub typechecked: bool,
     pub garbage_collected: bool,
     pub safe: bool,
-    pub name: String,
+    pub name: &'static str,
 }
 
 impl ExecuterProperties {
@@ -20,7 +20,7 @@ impl ExecuterProperties {
             GarbageCollected => self.garbage_collected,
             Safe => self.safe,
             False => false,
-            ImplementationName(name ) => &self.name == name,
+            ImplementationName(name) => self.name == name,
     
             Not(p) => !self.matches_predicate(p),
             And(p1, p2) => self.matches_predicate(p1) && self.matches_predicate(p2),

@@ -4,180 +4,19 @@ use std::process;
 use std::os::unix::io::RawFd;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{self, AtomicUsize};
+use std::path::Path;
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
-use lazy_static::lazy_static;
+
 use nix::unistd::{self, ForkResult};
 use nix::sys::wait::{self, WaitStatus};
 use nix::sys::signal::Signal;
 use nix::libc::{self, STDOUT_FILENO, STDERR_FILENO};
+
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
-use crate::executer::*;
-
-pub struct CC0Executer();
-
-impl Executer for CC0Executer {
-    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
-        let mut args: Vec<CString> = Vec::new();
-        args.extend(test.compiler_options.iter().map(string_to_cstring));
-        args.extend(test.sources.iter().map(string_to_cstring));
-        
-        // Global counter to come up with unique names for output files
-        static mut test_counter: AtomicUsize = AtomicUsize::new(0);
-
-        let out_file: CString = unsafe {
-            let current_dir = env::current_dir().unwrap();
-            let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
-            str_to_cstring(&format!("{}/a.out{}", current_dir.display(), next_id))
-        };
-        args.push(str_to_cstring("-vo"));
-        args.push(out_file.clone());
-
-        let compilation_result = compile(&args)?;
-        if let Err(output) = compilation_result {
-            return Ok((output, Behavior::CompileError))
-        }
-        
-        let exec_result = execute(test, &out_file, CC0_TEST_TIMEOUT);
-        if let Err(e) = fs::remove_file(Path::new(&out_file.to_str().unwrap())) {
-            eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
-        }
-
-        exec_result
-    }
-
-    fn properties(&self) -> ExecuterProperties {
-        ExecuterProperties {
-            libraries: true,
-            garbage_collected: true,
-            safe: true,
-            typechecked: true,
-            name: "cc0".to_string()
-        }
-    }
-}
-
-pub struct C0VMExecuter();
-
-impl Executer for C0VMExecuter {
-    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
-        // Compile test case
-        let mut args: Vec<CString> = Vec::new();
-        args.extend(test.compiler_options.iter().map(string_to_cstring));
-        args.extend(test.sources.iter().map(string_to_cstring));
-        
-        static mut test_counter: AtomicUsize = AtomicUsize::new(0);
-        
-        let out_file: CString = unsafe {
-            let current_dir = env::current_dir().unwrap();
-            let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
-            str_to_cstring(&format!("{}/a.out{}.bc0", current_dir.display(), next_id))
-        };
-        args.push(str_to_cstring("-vbo"));
-        args.push(out_file.clone());
-
-        let compilation_result = compile(&args)?;
-        if let Err(output) = compilation_result {
-            return Ok((output, Behavior::CompileError))
-        }
-
-        // Run test case
-        let exec_result = 
-            execute_with_args(
-                test, 
-                C0VM_PATH.as_ref(), 
-                &[out_file.as_ref()], 
-                C0VM_TEST_TIMEOUT);
-        
-        if let Err(e) = fs::remove_file(out_file.to_str().unwrap()) {
-            eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
-        }
-
-        exec_result
-    }
-
-    fn properties(&self) -> ExecuterProperties {
-        ExecuterProperties {
-            libraries: true,
-            garbage_collected: false,
-            safe: true,
-            typechecked: true,
-            name: "cc0_c0vm".to_string()
-        }
-    }
-}
-
-pub struct CoinExecuter();
-
-impl Executer for CoinExecuter {
-    fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
-        // Check if it uses C1, if so then skip the test
-        if test.sources.iter().any(|source| source.ends_with(".c1")) {
-            return Ok(("<C1 test skipped>".to_string(), Behavior::Skipped))
-        }
-
-        // No need to compile tests for the C0in-trepter
-        let mut args: Vec<CString> = Vec::new();
-        args.extend(test.compiler_options.iter().map(string_to_cstring));
-        args.extend(test.sources.iter().map(string_to_cstring));
-
-        execute_with_args(test, COIN_EXEC_PATH.as_ref(), &args, COIN_TEST_TIMEOUT)
-    }
-
-    fn properties(&self) -> ExecuterProperties {
-        ExecuterProperties {
-            libraries: true,
-            garbage_collected: false,
-            safe: true,
-            typechecked: true,
-            name: "coin".to_string()
-        }
-    }
-}
-
-lazy_static! {
-    /// Absolute path to CC0 repository
-    static ref C0_HOME: Option<String> = {
-        env::var("C0_HOME").ok().map(|path| {
-            let pathbuf = PathBuf::from(&path);
-            fs::canonicalize(pathbuf).unwrap_or_else(|err| {
-                eprintln!("Error: C0_HOME='{}': {:#}", path, err);
-                process::exit(1)
-            }).to_str().unwrap().to_string()        
-        })
-    };
-
-    static ref CC0_PATH: CString = {
-        let path = match C0_HOME.as_ref() {
-            Some(path) => format!("{}/bin/cc0", path),
-            None => "cc0".to_string()
-        };
-
-        CString::new(path).unwrap()
-    };
-
-    static ref C0VM_PATH: CString = {
-        let path = match C0_HOME.as_ref() {
-            Some(path) => format!("{}/vm/c0vm", path),
-            None => "c0vm".to_string()
-        };
-
-        CString::new(path).unwrap()
-    };
-
-    static ref COIN_EXEC_PATH: CString = {
-        let path = match C0_HOME.as_ref() {
-            Some(path) => format!("{}/bin/coin-exec.bin", path),
-            None => "coin-exec".to_string()
-        };
-
-        CString::new(path).unwrap()
-    };    
-}
+use crate::options::*;
 
 /// Timeout for compilation
 const COMPILATION_TIMEOUT: u32 = 10;
@@ -200,9 +39,14 @@ const CC0_GCC_FAILURE_CODE: i32 = 2;
 const EXEC_FAILURE_CODE: i32 = 100;
 const RUST_PANIC_CODE: i32 = 101;
 
-fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
+pub fn compile<CC0Path: AsRef<CStr>, Arg: AsRef<CStr>>(
+    cc0: CC0Path, 
+    args: &[Arg],
+    timeout: u64,
+    memory: u64) -> Result<Result<(), String>> 
+{
     // Create argv
-    let mut argv = vec![CC0_PATH.as_ref()];
+    let mut argv = vec![cc0.as_ref()];
     argv.extend(args.iter().map(|arg| arg.as_ref()));
 
     // Create a pipe to record stdout and stuff
@@ -212,9 +56,9 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
         ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
-            set_resource_limits(COMPILATION_MAX_MEM, COMPILATION_TIMEOUT as u64);
+            set_resource_limits(memory, timeout);
 
-            let _ = unistd::execvp(CC0_PATH.as_ref(), &argv);
+            let _ = unistd::execvp(cc0.as_ref(), &argv);
             unsafe { libc::_exit(EXEC_FAILURE_CODE); }
         },
 
@@ -235,18 +79,19 @@ fn compile<Arg: AsRef<CStr>>(args: &[Arg]) -> Result<Result<(), String>> {
     }
 }
 
-fn execute<Executable: AsRef<CStr>>(info: &TestExecutionInfo, executable: Executable, timeout: i32) -> Result<(String, Behavior)> {
-    execute_with_args::<Executable, &CStr>(info, executable, &[], timeout)
+pub fn execute<Executable: AsRef<CStr>>(info: &TestExecutionInfo, executable: Executable, timeout: u64, memory: u64) -> Result<(String, Behavior)> {
+    execute_with_args::<Executable, &CStr>(info, executable, &[], timeout, memory)
 }
 
-fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
+pub fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
     info: &TestExecutionInfo, 
     executable: Executable, 
     args: &[Arg], 
-    timeout: i32) -> Result<(String, Behavior)> 
+    timeout: u64,
+    memory: u64) -> Result<(String, Behavior)> 
 {
     let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
-    let result_env = string_to_cstring(&format!("C0_RESULT_FILE={}", result_file));
+    let result_env = CString::new(format!("C0_RESULT_FILE={}", result_file)).unwrap();
 
     let mut argv = vec![executable.as_ref()];
     argv.extend(args.iter().map(|arg| arg.as_ref()));
@@ -257,7 +102,7 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
         ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
             redirect_io(write_pipe);
-            set_resource_limits(TEST_MAX_MEM, timeout as u64);
+            set_resource_limits(memory, timeout);
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
 
             let _ = unistd::execve(executable.as_ref(), &argv, &[&result_env]).unwrap_err();
@@ -275,8 +120,8 @@ fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
             let result = match fs::read(&result_file) {
                 Ok(result) => {
                     fs::remove_file(Path::new(&result_file))
-                        .context("when removing test program result file")?;                    
-                    
+                        .context("when removing test program result file")?;
+
                     if result.len() == 5 {
                         let bytes = [result[1], result[2], result[3], result[4]];
                         Some(i32::from_ne_bytes(bytes))
@@ -396,17 +241,10 @@ mod compile_tests {
         };
 
         let args = [CString::new("test_resources/test.c0").unwrap()];
-        compile(&args)?.map_err(|e| anyhow!(e))?;
+        todo!();
+        // compile(&args)?.map_err(|e| anyhow!(e))?;
         assert_eq!(execute(&test.execution, &CString::new("a.out").unwrap(), 5)?.1, Behavior::Return(Some(0)));
 
         Ok(())
     }
-}
-
-fn str_to_cstring(s: &str) -> CString {
-    CString::new(s.as_bytes()).unwrap()        
-}
-
-fn string_to_cstring(s: &String) -> CString {
-    CString::new(s.as_bytes()).unwrap()        
 }
