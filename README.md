@@ -59,13 +59,13 @@ OPTIONS:
             Max amount of memory a test can use.
 
             Should be of the form <n> <unit> where unit is gb, mb, kb, or
-            optionally blank to indicate 'n' is bytes [default: 1 GB]
+            optionally blank to indicate 'n' is bytes [default: 2 GB]
         --compilation-time <compilation-time>
             Timeout in seconds for compilation via CC0
 
             Includes time spent in GCC [default: 20]
         --compilation-mem <compilation-mem>
-            Maximum amount of memory CC0/GCC can use [default: 1 GB]
+            Maximum amount of memory CC0/GCC can use [default: 4 GB]
 
 
 ARGS:
@@ -79,8 +79,10 @@ ARGS:
             Path to the top-level test directory.
 
             The directory should contain subdirectories which should either
-            contain test cases or a sources.test file```
+            contain test cases or a sources.test file
+```
 
+Example:
 ```
 $ c0check cc0 ~/c0-developer/cc0/tests/ --c0-home ~/c0-developer/cc0/
  246/3742 ✅ Test passed: l5tests1-f12/thorin-opt-0.c0: return 225520
