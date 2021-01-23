@@ -19,23 +19,70 @@ making the system unusable for other purposes.
 ## Requirements
 
 This program should work on Linux and MacOS. Note that since this program
-spawns a lot of processes, it might not work well on the Andrew Linux servers.
-You can set `RAYON_NUM_THREADS` to something low to limit the resource 
-usage of this program.
+spawns a lot of processes, it might get throttled on the Andrew servers.
+You can set the environment variable `RAYON_NUM_THREADS` to something low 
+to limit the resource usage of this program.
 
 ## Usage
 
-The program can be built using `cargo build` and run with `cargo run`.
-The `--release` flag can be added in order to optimize (the difference can be substantial).
-
-You should also set the `C0_HOME` environment variable, or the program
-will use the `cc0`/`c0vm`/`coin-exec` on your `$PATH`, which might be
-incorrect for development usage
+The program can be installed by cloning the repository and running
+`cargo install --path .`. This will install the binary to `~/.cargo/bin`.
+Alternatively, you could use `cargo run --release -- <args>` if you don't
+want to add it to your path.
 
 ```
-$ cargo run -- <test program=cc0|c0vm|coin> <path to test folder>
-# For example, 
-$ C0_HOME=~/c0-developer/cc0 cargo run -- cc0 ~/c0-developer/cc0/tests/
+c0check 1.0.0
+
+USAGE:
+    c0check [OPTIONS] <executer> <test-dir> --c0-home <c0-home>
+
+FLAGS:
+    -h, --help
+            Prints help information
+
+    -V, --version
+            Prints version information
+
+
+OPTIONS:
+        --c0-home <c0-home>
+            Path to CC0 directory.
+
+            Should have bin/cc0, bin/coin-exec, and vm/c0vm. Will default to
+            $C0_HOME if not provided
+    -t, --test-time <test-time>
+            Timeout in seconds for running each test
+
+            This is real CPU time, not 'wall-clock' time, since it is enforced
+            using setrlimit() [default: 10]
+    -m, --test-memory <test-memory>
+            Max amount of memory a test can use.
+
+            Should be of the form <n> <unit> where unit is gb, mb, kb, or
+            optionally blank to indicate 'n' is bytes [default: 1 GB]
+        --compilation-time <compilation-time>
+            Timeout in seconds for compilation via CC0
+
+            Includes time spent in GCC [default: 20]
+        --compilation-mem <compilation-mem>
+            Maximum amount of memory CC0/GCC can use [default: 1 GB]
+
+
+ARGS:
+    <executer>
+            Which implementation to test
+
+            'cc0' tests the GCC backend. 'c0vm' tests the bytecode compiler and
+            vm implementation. 'coin' tests the interpreter [possible values:
+            CC0, C0VM, Coin]
+    <test-dir>
+            Path to the top-level test directory.
+
+            The directory should contain subdirectories which should either
+            contain test cases or a sources.test file```
+
+```
+$ c0check cc0 ~/c0-developer/cc0/tests/ --c0-home ~/c0-developer/cc0/
  246/3742 ✅ Test passed: l5tests1-f12/thorin-opt-0.c0: return 225520
  247/3742 ✅ Test passed: l3tests0/exception03.c0: infloop
  248/3742 ✅ Test passed: ibhargav-voidptr-lval-casts/invalid-lval-cast.c1: error
@@ -49,6 +96,7 @@ Failed tests:
 Errors:
 
 ⛔ l5tests1/brachiosaurus-full-of-hot-air.c0: !cc0_c0vm => return 999
+<output elided>
 CC0 timed out
 
 Test summary:
@@ -83,3 +131,5 @@ file, then there is the following race condition:
 |                           | Invokes `gcc` on `haz.c0.c` |
 |                         | Error: `haz.c0.c` doesn't exist |
 | Error: executable produces wrong result | |
+
+This will be fixed by the Fall 2021 release of CC0

@@ -147,3 +147,20 @@ fn read_test_files(dir: &Path) -> Result<Vec<TestInfo>> {
 
     Ok(tests)
 }
+
+#[cfg(test)]
+mod discover_tests {
+    use super::*;
+
+    use std::env;
+
+    #[test]
+    fn test() -> Result<()> {
+        let testdir = env::var("C0_HOME")?;
+        let tests = discover(&Path::new(&format!("{}/tests/", testdir)))?;
+
+        assert_eq!(tests.len(), 3761);
+
+        Ok(())
+    }
+}
