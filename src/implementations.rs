@@ -4,7 +4,7 @@ use std::env;
 use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use anyhow::{Result, Context, anyhow};
+use anyhow::{Result, anyhow};
  
 use crate::spec::*;
 use crate::executer::{Executer, ExecuterProperties};
@@ -54,7 +54,7 @@ impl Executer for CC0Executer {
         args.push(str_to_cstring("-vo"));
         args.push(out_file.clone());
 
-        let compilation_result = compile(&self.cc0_path, &args, self.cc0_memory, self.cc0_time)?;
+        let compilation_result = compile(&self.cc0_path, &args, self.cc0_time, self.cc0_memory)?;
         if let Err(output) = compilation_result {
             return Ok((output, Behavior::CompileError))
         }
@@ -182,7 +182,9 @@ pub struct CoinExecuter {
 
 impl CoinExecuter {
     pub fn new(options: &Options) -> Result<CoinExecuter> {
-        let coin_path = make_cstr_path(options.c0_home.clone(), &["bin", "coin-exec"])?;
+        // .bin is necessary since coin-exec is missing
+        // #!/bin/sh at the top in master for now
+        let coin_path = make_cstr_path(options.c0_home.clone(), &["bin", "coin-exec.bin"])?;
         
         Ok(CoinExecuter {
             coin_path,
@@ -220,7 +222,7 @@ impl Executer for CoinExecuter {
 }
 
 fn make_cstr_path(mut base: PathBuf, path: &[&str]) -> Result<CString> {
-    base.extend(["bin", "cc0"].iter());
+    base.extend(path.iter());
 
     if !base.is_file() {
         return Err(anyhow!("'{:?}' is not a file", path))

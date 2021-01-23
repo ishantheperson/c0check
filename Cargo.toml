@@ -10,10 +10,15 @@ edition = "2018"
 lto = true
 
 [dependencies]
+# Lexing
 logos = "0.11.4"
+# POSIX APIs
 nix = "0.19.0"
+# Easy parallelism
 rayon = "1.5"
-lazy_static = "1.4.0"
+# Command line options parsing
 structopt = "0.3"
+# Error handling
 anyhow = "1.0"
+# Error type creation
 thiserror = "1.0.23"

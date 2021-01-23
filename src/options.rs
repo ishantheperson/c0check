@@ -50,9 +50,9 @@ pub struct Options {
     /// where unit is gb, mb, kb, or optionally blank to indicate 'n' is bytes
     #[structopt(
         short = "m", 
-        long, 
+        long,
         parse(try_from_str = parse_size), 
-        default_value = "1 GB")]
+        default_value = "2 GB")]
     pub test_memory: u64,
 
     /// Timeout in seconds for compilation via CC0
@@ -65,7 +65,7 @@ pub struct Options {
     #[structopt(
         long, 
         parse(try_from_str = parse_size),
-        default_value = "1 GB")]
+        default_value = "4 GB")]
     pub compilation_mem: u64
 }
 
@@ -90,17 +90,16 @@ fn parse_size(size: &str) -> Result<u64> {
         return Err(anyhow!("No number found in '{}'", size))
     }
 
-    let n = n.parse::<u64>()?;
-
+    let n = n.parse::<f64>()?;
     let bytes = match unit.trim().to_ascii_lowercase().as_str() {
-        "g" | "gb" => n * 1024 * 1024 * 1024,
-        "m" | "mb" => n * 1024 * 1024,
-        "k" | "kb" => n * 1024,
+        "g" | "gb" => n * 1024. * 1024. * 1024.,
+        "m" | "mb" => n * 1024. * 1024.,
+        "k" | "kb" => n * 1024.,
         "" => n,
         _ => return Err(anyhow!("Invalid size unit '{}'", unit))
     };
 
-    Ok(bytes)
+    Ok(bytes as u64)
 }
 
 #[cfg(test)]
