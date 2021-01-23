@@ -2,15 +2,24 @@ use std::path::PathBuf;
 use structopt::clap::{AppSettings, arg_enum};
 use anyhow::{anyhow, Result, Context};
 
-use crate::executer::*;
-use crate::launcher::*;
-
 pub use structopt::StructOpt;
 
 #[derive(StructOpt)]
 #[structopt(setting(AppSettings::ColoredHelp))]
 #[structopt(setting(AppSettings::DeriveDisplayOrder))]
+#[structopt(set_term_width(80))]
 pub struct Options {
+    /// Which implementation to test
+    ///
+    /// 'cc0' tests the GCC backend.
+    /// 'c0vm' tests the bytecode compiler and vm implementation.
+    /// 'coin' tests the interpreter
+    #[structopt(
+        possible_values = &ExecuterKind::variants(),
+        case_insensitive = true
+    )]
+    pub executer: ExecuterKind,
+
     /// Path to the top-level test directory.
     ///
     /// The directory should contain subdirectories which 
@@ -18,23 +27,15 @@ pub struct Options {
     #[structopt(parse(from_os_str))]
     pub test_dir: PathBuf,
 
-    /// Which implementation to test
-    ///
-    /// 'cc0' tests the GCC backend
-    /// 'c0vm' tests the bytecode compiler and vm implementation
-    /// 'coin' tests the interpreter
-    #[structopt(
-        possible_values = &ExecuterKind::variants(),
-        case_insensitive = true
-    )]
-    pub executer: ExecuterKind,
-    
     /// Path to CC0 directory.
     ///
     /// Should have bin/cc0, bin/coin-exec, and vm/c0vm.
     /// Will default to $C0_HOME if not provided
-    #[structopt(long, env = "C0_HOME")]
-    pub c0_home: String,
+    #[structopt(
+        long, 
+        parse(from_os_str),
+        env = "C0_HOME")]
+    pub c0_home: PathBuf,
 
     /// Timeout in seconds for running each test
     ///
@@ -54,7 +55,7 @@ pub struct Options {
         default_value = "1 GB")]
     pub test_memory: u64,
 
-    /// Maxmimum amount of time CC0 can spending compiling.
+    /// Timeout in seconds for compilation via CC0
     ///
     /// Includes time spent in GCC
     #[structopt(long, default_value = "20")]

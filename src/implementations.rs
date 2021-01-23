@@ -1,15 +1,41 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use std::env;
 use std::sync::atomic::{self, AtomicUsize};
-use std::ffi::{CStr, CString};
-use anyhow::{Result, Context};
+use std::ffi::CString;
+use std::os::unix::ffi::OsStrExt;
+use anyhow::{Result, Context, anyhow};
  
 use crate::spec::*;
 use crate::executer::{Executer, ExecuterProperties};
 use crate::launcher::*;
+use crate::options::*;
 
-pub struct CC0Executer();
+pub struct CC0Executer {
+    cc0_path: CString,
+
+    cc0_memory: u64,
+    cc0_time: u64,
+
+    test_memory: u64,
+    test_time: u64
+}
+
+impl CC0Executer {
+    pub fn new(options: &Options) -> Result<CC0Executer> {
+        let cc0_path = make_cstr_path(options.c0_home.clone(), &["bin", "cc0"])?;
+
+        Ok(CC0Executer {
+            cc0_path,
+
+            cc0_memory: options.compilation_mem,
+            cc0_time: options.compilation_time,
+
+            test_memory: options.test_memory,
+            test_time: options.test_time
+        })
+    }
+}
 
 impl Executer for CC0Executer {
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
@@ -28,12 +54,12 @@ impl Executer for CC0Executer {
         args.push(str_to_cstring("-vo"));
         args.push(out_file.clone());
 
-        let compilation_result = compile(&args)?;
+        let compilation_result = compile(&self.cc0_path, &args, self.cc0_memory, self.cc0_time)?;
         if let Err(output) = compilation_result {
             return Ok((output, Behavior::CompileError))
         }
         
-        let exec_result = execute(test, &out_file, CC0_TEST_TIMEOUT);
+        let exec_result = execute(test, &out_file, self.test_time, self.test_memory);
         if let Err(e) = fs::remove_file(Path::new(&out_file.to_str().unwrap())) {
             eprintln!("❗ Couldn't delete a.out file: {:#}", e);
         }
@@ -61,7 +87,36 @@ impl Executer for CC0Executer {
     }
 }
 
-pub struct C0VMExecuter();
+pub struct C0VMExecuter {
+    cc0_path: CString,
+
+    cc0_memory: u64,
+    cc0_time: u64,
+
+    c0vm_path: CString,
+
+    test_memory: u64,
+    test_time: u64
+}
+
+impl C0VMExecuter {
+    pub fn new(options: &Options) -> Result<C0VMExecuter> {
+        let cc0_path = make_cstr_path(options.c0_home.clone(), &["bin", "cc0"])?;
+        let c0vm_path = make_cstr_path(options.c0_home.clone(), &["vm", "c0vm"])?;
+
+        Ok(C0VMExecuter {
+            cc0_path,
+
+            cc0_memory: options.compilation_mem,
+            cc0_time: options.compilation_time,
+
+            c0vm_path,
+
+            test_memory: options.test_memory,
+            test_time: options.test_time
+        })
+    }    
+}
 
 impl Executer for C0VMExecuter {
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
@@ -80,7 +135,13 @@ impl Executer for C0VMExecuter {
         args.push(str_to_cstring("-vbo"));
         args.push(out_file.clone());
 
-        let compilation_result = compile(&args)?;
+        let compilation_result = 
+            compile(
+                &self.cc0_path, 
+                &args,
+                self.cc0_time,
+                self.cc0_memory)?;
+        
         if let Err(output) = compilation_result {
             return Ok((output, Behavior::CompileError))
         }
@@ -89,9 +150,10 @@ impl Executer for C0VMExecuter {
         let exec_result = 
             execute_with_args(
                 test, 
-                C0VM_PATH.as_ref(), 
+                &self.c0vm_path, 
                 &[out_file.as_ref()], 
-                C0VM_TEST_TIMEOUT);
+                self.test_time, 
+                self.test_memory);
         
         if let Err(e) = fs::remove_file(out_file.to_str().unwrap()) {
             eprintln!("❗ Couldn't delete bc0 file: {:#}", e);
@@ -111,7 +173,25 @@ impl Executer for C0VMExecuter {
     }
 }
 
-pub struct CoinExecuter();
+pub struct CoinExecuter {
+    coin_path: CString,
+
+    test_time: u64,
+    test_memory: u64
+}
+
+impl CoinExecuter {
+    pub fn new(options: &Options) -> Result<CoinExecuter> {
+        let coin_path = make_cstr_path(options.c0_home.clone(), &["bin", "coin-exec"])?;
+        
+        Ok(CoinExecuter {
+            coin_path,
+
+            test_time: options.test_time,
+            test_memory: options.test_memory
+        })
+    }
+}
 
 impl Executer for CoinExecuter {
     fn run_test(&self, test: &TestExecutionInfo) -> Result<(String, Behavior)> {
@@ -125,7 +205,7 @@ impl Executer for CoinExecuter {
         args.extend(test.compiler_options.iter().map(string_to_cstring));
         args.extend(test.sources.iter().map(string_to_cstring));
 
-        execute_with_args(test, COIN_EXEC_PATH.as_ref(), &args, COIN_TEST_TIMEOUT)
+        execute_with_args(test, &self.coin_path, &args, self.test_time, self.test_memory)
     }
 
     fn properties(&self) -> ExecuterProperties {
@@ -137,6 +217,16 @@ impl Executer for CoinExecuter {
             name: "coin"
         }
     }
+}
+
+fn make_cstr_path(mut base: PathBuf, path: &[&str]) -> Result<CString> {
+    base.extend(["bin", "cc0"].iter());
+
+    if !base.is_file() {
+        return Err(anyhow!("'{:?}' is not a file", path))
+    }
+
+    Ok(CString::new(base.as_os_str().as_bytes()).unwrap())
 }
 
 fn str_to_cstring(s: &str) -> CString {

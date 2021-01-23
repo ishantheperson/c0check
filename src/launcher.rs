@@ -5,6 +5,7 @@ use std::os::unix::io::RawFd;
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 
@@ -16,24 +17,6 @@ use nix::libc::{self, STDOUT_FILENO, STDERR_FILENO};
 use anyhow::{anyhow, Context, Result};
 
 use crate::spec::*;
-use crate::options::*;
-
-/// Timeout for compilation
-const COMPILATION_TIMEOUT: u32 = 10;
-/// Timeout for running tests with the GCC backend
-const CC0_TEST_TIMEOUT: i32 = 10;
-/// Timeout for running tests in C0VM.
-/// C0VM is probably more than 2x as slow as GCC,
-/// but truly intensive tests should not be run in C0VM
-const C0VM_TEST_TIMEOUT: i32 = 20;
-/// Similar to C0VM, truly intensive tests should not be run in coin
-const COIN_TEST_TIMEOUT: i32 = 20;
-
-/// GCC never seems to use too much memory, but we set a limit anyway
-const COMPILATION_MAX_MEM: u64 = 4 * 1024 * 1024 * 1024;
-/// Since coin/c0vm don't have a garbage collector, 
-/// some tests can eat up a lot of memory
-const TEST_MAX_MEM: u64 = 1 * 1024 * 1024 * 1024;
 
 const CC0_GCC_FAILURE_CODE: i32 = 2;
 const EXEC_FAILURE_CODE: i32 = 100;
@@ -90,7 +73,14 @@ pub fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
     timeout: u64,
     memory: u64) -> Result<(String, Behavior)> 
 {
-    let result_file = format!("{}/c0_result{}", env::current_dir().unwrap().display(), unistd::gettid());
+    static mut test_counter: AtomicUsize = AtomicUsize::new(0);
+
+    let result_file: String = unsafe {
+        let current_dir = env::current_dir().unwrap();
+        let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
+        format!("{}/c0_result{}", current_dir.display(), next_id)
+    };
+
     let result_env = CString::new(format!("C0_RESULT_FILE={}", result_file)).unwrap();
 
     let mut argv = vec![executable.as_ref()];
@@ -229,6 +219,8 @@ mod compile_tests {
     use super::*;
     use std::sync::Arc;
 
+    const TEST_MEM: u64 = 4 * 1024 * 1024 * 1024;
+
     #[test]
     fn test() -> Result<()> {
         let test = TestInfo {
@@ -241,9 +233,8 @@ mod compile_tests {
         };
 
         let args = [CString::new("test_resources/test.c0").unwrap()];
-        todo!();
-        // compile(&args)?.map_err(|e| anyhow!(e))?;
-        assert_eq!(execute(&test.execution, &CString::new("a.out").unwrap(), 5)?.1, Behavior::Return(Some(0)));
+        compile(CString::new("bin/cc0")?, &args, 5, TEST_MEM)?.map_err(|e| anyhow!(e))?;
+        assert_eq!(execute(&test.execution, &CString::new("a.out").unwrap(), 5, TEST_MEM)?.1, Behavior::Return(Some(0)));
 
         Ok(())
     }

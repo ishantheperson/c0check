@@ -1,7 +1,6 @@
 use std::sync::{Mutex, atomic::{self, AtomicUsize}};
 use std::time::Instant;
 use std::fs;
-use launcher::{C0VMExecuter, CC0Executer, CoinExecuter};
 use rayon::prelude::*;
 use anyhow::{Result, Error, Context};
 
@@ -18,6 +17,7 @@ use crate::spec::*;
 use crate::executer::Executer;
 use crate::checker::{Failure, TestResult};
 use crate::options::*;
+use crate::implementations::*;
 
 struct TestResults<'a> {
     failures: Vec<(&'a TestInfo, Failure)>,
@@ -72,11 +72,13 @@ fn run_tests<'a>(executer: &dyn Executer, tests: &'a [TestInfo]) -> TestResults<
 }
 
 fn main() -> Result<()> {
-    let Options { executer, test_dir, .. } = Options::from_args();
-    let executer: &dyn Executer = match executer {
-        ExecuterKind::CC0 => &CC0Executer(),
-        ExecuterKind::C0VM => &C0VMExecuter(),
-        ExecuterKind::Coin => &CoinExecuter()
+    let options = Options::from_args();
+    let Options { ref executer, ref test_dir, .. } = options;
+    
+    let executer: Box<dyn Executer>  = match executer {
+        ExecuterKind::CC0 => Box::new(CC0Executer::new(&options)?),
+        ExecuterKind::C0VM => Box::new(C0VMExecuter::new(&options)?),
+        ExecuterKind::Coin => Box::new(CoinExecuter::new(&options)?)
     };
 
     // Load test cases
@@ -86,7 +88,7 @@ fn main() -> Result<()> {
     eprintln!("Discovered {} tests", tests.len());
 
     // Run test cases
-    let TestResults { failures, timeouts, errors } = run_tests(executer, &tests);
+    let TestResults { failures, timeouts, errors } = run_tests(&*executer, &tests);
     
     // Report results
     let successes = tests.len() - failures.len() - errors.len();
