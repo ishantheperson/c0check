@@ -4,7 +4,9 @@ This is a re-implementation of cc0-check in Rust.
 
 The key enhancement is that the test cases are run in parallel, and output from failed tests
 is saved. On my i7-8700k, this runs several times faster than the 
-SML-based `*-check` (~1 minute vs ~10 for CC0, ~6 minutes vs ~20 for C0VM)
+SML-based `*-check` (~1 minute vs ~10 for CC0, ~6 minutes vs ~20 for C0VM).
+On Andrew servers, the coin tests finish in 1 minute compared to 24 (due to 
+higher core)
 
 Other enhancements include better timeouts which measure user time spent
 in the test process as opposed to wall clock time. This means that if the
