@@ -4,7 +4,7 @@ use std::env;
 use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, Context};
  
 use crate::spec::*;
 use crate::executer::{Executer, ExecuterProperties};
@@ -224,11 +224,8 @@ impl Executer for CoinExecuter {
 fn make_cstr_path(mut base: PathBuf, path: &[&str]) -> Result<CString> {
     base.extend(path.iter());
 
-    if !base.is_file() {
-        return Err(anyhow!("'{:?}' is not a file", path))
-    }
-
-    Ok(CString::new(base.as_os_str().as_bytes()).unwrap())
+    let absolute_path = fs::canonicalize(&base).context(format!("When resolving path '{:#?}'", base))?;
+    Ok(CString::new(absolute_path.as_os_str().as_bytes()).unwrap())
 }
 
 fn str_to_cstring(s: &str) -> CString {
