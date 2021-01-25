@@ -32,13 +32,13 @@ pub fn compile<CC0Path: AsRef<CStr>, Arg: AsRef<CStr>>(
     let mut argv = vec![cc0.as_ref()];
     argv.extend(args.iter().map(|arg| arg.as_ref()));
 
-    // Create a pipe to record stdout and stuff
+    // Create a pipe to record stdout and stderr from the subprocess
     let (read_pipe, write_pipe) = unistd::pipe().context("When creating a pipe to record CC0 output")?;
 
     match unsafe { unistd::fork().context("when spawning CC0")? } {
         ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
-            redirect_io(write_pipe);
+            redirect_output(write_pipe);
             set_resource_limits(memory, timeout);
 
             let _ = unistd::execvp(cc0.as_ref(), &argv);
@@ -91,7 +91,7 @@ pub fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
     match unsafe { unistd::fork().context("when spawning test process")? } {
         ForkResult::Child => {
             unistd::close(read_pipe).unwrap();
-            redirect_io(write_pipe);
+            redirect_output(write_pipe);
             set_resource_limits(memory, timeout);
             env::set_current_dir(Path::new(&*info.directory)).expect("Couldn't change to the test directory");
 
@@ -155,7 +155,7 @@ pub fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
 }
 
 /// Redirects stdout and stderr to the given file descriptor
-fn redirect_io(target_file: RawFd) {
+fn redirect_output(target_file: RawFd) {
     unistd::dup2(target_file, STDOUT_FILENO).expect("Couldn't redirect stdout");
     unistd::dup2(target_file, STDERR_FILENO).expect("Couldn't redirect stderr");
 }
