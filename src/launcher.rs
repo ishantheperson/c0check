@@ -205,7 +205,7 @@ fn set_resource_limits(memory: u64, time: u64) {
         // if not configured with --disable-threads. 
         // However this might cause issues if we want to
         // do --enable-parallel-mark
-        rlim_max: time + 5
+        rlim_max: time.saturating_add(5)
     };
 
     unsafe {
