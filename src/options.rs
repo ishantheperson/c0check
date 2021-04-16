@@ -104,6 +104,10 @@ fn parse_size(size: &str) -> Result<u64> {
         _ => return Err(anyhow!("Invalid size unit '{}'", unit))
     };
 
+    if bytes > u64::MAX as f64 {
+        return Err(anyhow!("Size of '{}' bytes is out of range", bytes))
+    }
+
     Ok(bytes as u64)
 }
 
@@ -147,7 +151,8 @@ mod options_tests {
             "   mb",
             "   zmb",
             "-1",
-            "-9999999999999999999999999999999999999999999999999999999999"
+            "-9999999999999999999999999999999999999999999999999999999999",
+            "9999999999999999999999999999999999999999999999999999999999"
         );
     }
 }

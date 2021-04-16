@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::env;
@@ -44,9 +46,9 @@ impl Executer for CC0Executer {
         args.extend(test.sources.iter().map(string_to_cstring));
         
         // Global counter to come up with unique names for output files
-        static mut test_counter: AtomicUsize = AtomicUsize::new(0);
+        static test_counter: AtomicUsize = AtomicUsize::new(0);
 
-        let out_file: CString = unsafe {
+        let out_file: CString = {
             let current_dir = env::current_dir().unwrap();
             let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
             str_to_cstring(&format!("{}/a.out{}", current_dir.display(), next_id))
@@ -125,9 +127,9 @@ impl Executer for C0VMExecuter {
         args.extend(test.compiler_options.iter().map(string_to_cstring));
         args.extend(test.sources.iter().map(string_to_cstring));
         
-        static mut test_counter: AtomicUsize = AtomicUsize::new(0);
+        static test_counter: AtomicUsize = AtomicUsize::new(0);
         
-        let out_file: CString = unsafe {
+        let out_file: CString = {
             let current_dir = env::current_dir().unwrap();
             let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
             str_to_cstring(&format!("{}/a.out{}.bc0", current_dir.display(), next_id))

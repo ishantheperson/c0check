@@ -73,9 +73,9 @@ pub fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
     timeout: u64,
     memory: u64) -> Result<(String, Behavior)> 
 {
-    static mut test_counter: AtomicUsize = AtomicUsize::new(0);
+    static test_counter: AtomicUsize = AtomicUsize::new(0);
 
-    let result_file: String = unsafe {
+    let result_file: String = {
         let current_dir = env::current_dir().unwrap();
         let next_id = test_counter.fetch_add(1, atomic::Ordering::Relaxed);
         format!("{}/c0_result{}", current_dir.display(), next_id)
