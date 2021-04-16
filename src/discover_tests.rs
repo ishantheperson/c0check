@@ -2,7 +2,7 @@ use std::{fs::{self, File}, io::BufReader};
 use std::io::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::parse_spec::{self, ParseOptions};
 use crate::spec::*;
@@ -62,7 +62,7 @@ fn read_sources_file(dir: &Path, sources_test: File) -> Result<Vec<TestInfo>> {
         // TODO: use split_once
         let (spec, cmdline) = match splitted.as_slice() {
             [spec, cmdline] => (*spec, *cmdline),
-            _ => return Err(anyhow!("sources.test is missing '~' on line {}", lineno)),
+            _ => bail!("sources.test is missing '~' on line {}", lineno),
         };
 
         let specs = parse_spec::parse(spec, ParseOptions { require_test_marker: false })

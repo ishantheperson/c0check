@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use structopt::clap::{AppSettings, arg_enum};
-use anyhow::{anyhow, Result, Context};
+use anyhow::{bail, Result, Context};
 
 pub use structopt::StructOpt;
 
@@ -87,13 +87,13 @@ fn parse_size(size: &str) -> Result<u64> {
     let (n, unit) = size.split_at(suffix_pos);
 
     if n.is_empty() {
-        return Err(anyhow!("No number found in '{}'", size))
+        bail!("No number found in '{}'", size)
     }
 
     let n = n.parse::<f64>()?;
 
     if n < 0. {
-        return Err(anyhow!("Size cannot be negative"))
+        bail!("Size cannot be negative")
     }
 
     let bytes = match unit.trim().to_ascii_lowercase().as_str() {
@@ -101,11 +101,11 @@ fn parse_size(size: &str) -> Result<u64> {
         "m" | "mb" => n * 1024. * 1024.,
         "k" | "kb" => n * 1024.,
         "" => n,
-        _ => return Err(anyhow!("Invalid size unit '{}'", unit))
+        _ => bail!("Invalid size unit '{}'", unit)
     };
 
     if bytes > u64::MAX as f64 {
-        return Err(anyhow!("Size of '{}' bytes is out of range", bytes))
+        bail!("Size of '{}' bytes is out of range", bytes)
     }
 
     Ok(bytes as u64)
