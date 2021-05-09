@@ -7,7 +7,6 @@ use std::fs::{self, File};
 use std::path::Path;
 use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::{CStr, CString};
-use std::mem::MaybeUninit;
 
 use nix::unistd::{self, ForkResult};
 use nix::sys::wait::{self, WaitStatus};
