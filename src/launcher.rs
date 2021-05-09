@@ -1,9 +1,9 @@
 #![allow(non_upper_case_globals)]
 
-use std::process;
+use std::{io::Read, os::unix::prelude::FromRawFd, process};
 use std::os::unix::io::RawFd;
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::path::Path;
 use std::sync::atomic::{self, AtomicUsize};
 use std::ffi::{CStr, CString};
@@ -168,17 +168,7 @@ fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
     const PIPE_CAPACITY: usize = 65536;
     let mut bytes: Vec<u8> = Vec::with_capacity(PIPE_CAPACITY);
 
-    loop {
-        #[allow(clippy::clippy::uninit_assumed_init)]
-        let mut buf: [u8; PIPE_CAPACITY] = unsafe { MaybeUninit::uninit().assume_init() };
-        let num_bytes = unistd::read(read_pipe, &mut buf).context("When reading CC0 output")?;
-        if num_bytes == 0 {
-            // read() returns 0 on EOF
-            break;
-        }
-
-        bytes.extend(buf[..num_bytes].iter());
-    }
+    unsafe { File::from_raw_fd(read_pipe).read_to_end(&mut bytes)? }; 
 
     unistd::close(read_pipe).unwrap();
     let output = String::from_utf8_lossy(&bytes).to_string();

@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     let options = Options::from_args();
     let Options { ref executer, ref test_dir, .. } = options;
     
-    let executer: Box<dyn Executer>  = match executer {
+    let executer: Box<dyn Executer> = match executer {
         ExecuterKind::CC0 => Box::new(CC0Executer::new(&options)?),
         ExecuterKind::C0VM => Box::new(C0VMExecuter::new(&options)?),
         ExecuterKind::Coin => Box::new(CoinExecuter::new(&options)?)

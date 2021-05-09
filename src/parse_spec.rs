@@ -293,7 +293,7 @@ enum SpecToken {
     // Only used to help lex return
     #[token("*")]
     Star,
-    #[regex("[+-]?(0|[1-9][0-9]*)", |lex| i32::from_str_radix(lex.slice(), 10).ok())]
+    #[regex("[+-]?(0|[1-9][0-9]*)", |lex| lex.slice().parse())]
     #[regex("0[xX][0-9a-fA-F]+", |lex| i32::from_str_radix(&lex.slice()[2..], 16).ok())]
     Number(i32),
 
