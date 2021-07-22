@@ -13,7 +13,7 @@ use crate::spec::*;
 /// predicate ::= lib | typechecked | gc | safe | false | <ident>
 ///             | ! <predicate>
 ///             | <predicate>, <predicate>
-///             | <predicate> or <predicate> 
+///             | <predicate> or <predicate>
 ///
 /// behavior ::= error | infloop | abort | failure | segfault | div-by-zero
 ///            | runs | return * | return <int>
@@ -43,18 +43,18 @@ impl<'a> SpecParser<'a> {
     fn parse(&mut self) -> Result<Specs, SpecParseError> {
         use SpecParseError::*;
         use SpecToken::*;
-    
+
         self.lexer = SpecLexer::new(self.input);
-    
+
         // Make sure it starts with //test if required
         if self.options.require_test_marker {
             if !matches!(self.lexer.next(), Some((TestStartMarker, _))) {
                 return Err(NotSpec)
             }
         }
-    
+
         let mut tests: Specs = Vec::new();
-    
+
         loop {
             let spec = self.parse_spec()?;
             tests.push(spec);
@@ -65,15 +65,15 @@ impl<'a> SpecParser<'a> {
                 Some((_, range)) => return Err(self.unexpected_token(range, "semicolon to separate tests"))
             }
         };
-    
+
         Ok(tests)
     }
-    
+
     // Pratt parser based on matklad's blog post
     // https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
 
     /// Parses a spec
-    /// 
+    ///
     ///```text
     /// spec ::= <predicate> => <spec>
     ///        | <behavior>
@@ -94,12 +94,12 @@ impl<'a> SpecParser<'a> {
         else {
             let implementation = self.parse_implementation(0)?;
 
-            // After a predicate we always expect => 
+            // After a predicate we always expect =>
             match self.lexer.next() {
                 Some((FatArrow, _)) => (),
-                Some((_, range)) => 
+                Some((_, range)) =>
                     return Err(self.unexpected_token(range, "'=>' between implementation and behavior")),
-                None => 
+                None =>
                     return Err(UnexpectedEOF { msg: "'=>' between implementation and behavior" }),
             }
 
@@ -110,12 +110,12 @@ impl<'a> SpecParser<'a> {
     }
 
     /// Parses an implementation predicate
-    /// 
+    ///
     ///```text
     /// predicate ::= lib | typechecked | gc | safe | false | <ident>
     ///             | ! <predicate>
     ///             | <predicate>, <predicate>
-    ///             | <predicate> or <predicate> 
+    ///             | <predicate> or <predicate>
     ///```
     fn parse_implementation(&mut self, min_bp: i32) -> Result<ImplementationPredicate, SpecParseError> {
         use SpecParseError::*;
@@ -167,15 +167,15 @@ impl<'a> SpecParser<'a> {
             // No postfix operators so 'peek' technically could be 'next'
             let (left_bp, right_bp) = match self.lexer.peek() {
                 None => break,
-                Some((tok, _)) => 
+                Some((tok, _)) =>
                     match infix_binding_power(&tok) {
-                        Some(bps) => bps, 
+                        Some(bps) => bps,
                         None => break
                     }
             };
 
             if left_bp < min_bp {
-                break;
+                break
             }
 
             let (tok, _) = self.lexer.next().unwrap();
@@ -193,7 +193,7 @@ impl<'a> SpecParser<'a> {
     }
 
     /// Parses a program expected behavior
-    /// 
+    ///
     ///```text
     /// behavior ::= error | infloop | abort | failure | segfault | div-by-zero
     ///            | runs | return * | return <int>
@@ -201,10 +201,10 @@ impl<'a> SpecParser<'a> {
     fn parse_behavior(&mut self) -> Result<Behavior, SpecParseError> {
         use SpecParseError::*;
         use Behavior::*;
-    
+
         match self.lexer.next() {
             None => Err(UnexpectedEOF { msg: "behavior" }),
-            Some((tok, range)) => 
+            Some((tok, range)) =>
                 match tok {
                     SpecToken::CompileError => Ok(CompileError),
                     SpecToken::Runs => Ok(Runs),
@@ -214,7 +214,7 @@ impl<'a> SpecParser<'a> {
                     SpecToken::Segfault => Ok(Segfault),
                     SpecToken::DivZero => Ok(DivZero),
                     SpecToken::Return(x) => Ok(Return(x)),
-    
+
                     _ => Err(self.unexpected_token(range, "behavior"))
                 }
         }
@@ -222,11 +222,11 @@ impl<'a> SpecParser<'a> {
 
     /// Creates an unexpected token error
     fn unexpected_token(&mut self, range: Span, msg: &'static str) -> SpecParseError {
-        SpecParseError::UnexpectedToken { 
-            actual: String::from(&self.input[range.clone()]), 
+        SpecParseError::UnexpectedToken {
+            actual: String::from(&self.input[range.clone()]),
             range,
-            msg 
-        }        
+            msg
+        }
     }
 }
 
@@ -238,7 +238,7 @@ pub enum SpecParseError {
 
     #[error("unexpected '{actual:?}' at {range:?}, expected {msg}")]
     UnexpectedToken { actual: String, range: Span, msg: &'static str },
-    
+
     #[error("unexpected end of input, expected {msg}")]
     UnexpectedEOF { msg: &'static str }
 }
@@ -332,10 +332,10 @@ impl SpecToken {
         use SpecToken::*;
 
         matches!(self,
-              CompileError 
+              CompileError
             | Runs
-            | InfiniteLoop 
-            | Segfault 
+            | InfiniteLoop
+            | Segfault
             | Abort
             | Failure
             | DivZero

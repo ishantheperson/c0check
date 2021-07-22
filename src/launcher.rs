@@ -13,7 +13,7 @@ use nix::sys::wait::{self, WaitStatus};
 use nix::sys::signal::Signal;
 use nix::libc::{self, STDOUT_FILENO, STDERR_FILENO};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::spec::*;
 
@@ -128,7 +128,7 @@ pub fn execute_with_args<Executable: AsRef<CStr>, Arg: AsRef<CStr>>(
                         Behavior::Return(Some(exit_code))
                     }
                     else {
-                        return Err(anyhow!("C0 program exited succesfully, but no return value was written"))
+                        bail!("C0 program exited succesfully, but no return value was written")
                     },
                 WaitStatus::Exited(_, 1) => Behavior::Failure,
                 // Coin only. Hopefully other exit codes don't conflict
@@ -159,17 +159,17 @@ fn redirect_output(target_file: RawFd) {
     unistd::dup2(target_file, STDERR_FILENO).expect("Couldn't redirect stderr");
 }
 
-/// Reads output from the given pipe set
+/// Reads output from the given pipe set. Consumes the read and write pipes
 fn read_from_pipe(read_pipe: RawFd, write_pipe: RawFd) -> Result<String> {
     // Capture CC0 output
-    unistd::close(write_pipe).unwrap();
+    unistd::close(write_pipe).expect("Couldn't close write pipe");
     
     const PIPE_CAPACITY: usize = 65536;
     let mut bytes: Vec<u8> = Vec::with_capacity(PIPE_CAPACITY);
 
     unsafe { File::from_raw_fd(read_pipe).read_to_end(&mut bytes)? }; 
+    // File::from_raw_fd will close the read pipe for us
 
-    unistd::close(read_pipe).unwrap();
     let output = String::from_utf8_lossy(&bytes).to_string();
     Ok(output)
 }
